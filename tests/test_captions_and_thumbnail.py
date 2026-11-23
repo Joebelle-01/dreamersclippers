@@ -7,8 +7,10 @@ import sqlite3
 import subprocess
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
@@ -21,6 +23,8 @@ from backend.services.caption_service import (
     build_srt_subtitles,
     escape_ffmpeg_filter_path,
     sanitize_ass_text,
+    transcribe_clip,
+    transcribe_window_words,
 )
 from backend.services.video_renderer import render_vertical_clip, render_vertical_thumbnail
 
@@ -458,3 +462,50 @@ class TestDbMigrationAndEndpoints:
             srt_dl = client.get(f"/api/media/srt/{clip_id}")
             assert srt_dl.status_code == 200
             assert "EDITED CAPTION" in srt_dl.text
+
+    def test_transcribe_passes_float32_ndarray_and_bypasses_pyav_decode_audio(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        settings = Settings(data_dir=tmp_path / "data")
+        src = tmp_path / "speech_clip.mp4"
+        _synthesize_test_mp4(settings.ffmpeg_path, src, duration_sec=2.0)
+
+        received_audio: list[object] = []
+
+        class _FakeModel:
+            def transcribe(self, audio: object, **kwargs: object):
+                received_audio.append(audio)
+                fake_seg = SimpleNamespace(
+                    start=0.1,
+                    end=1.2,
+                    text="Wait no way!",
+                    words=[
+                        SimpleNamespace(start=0.1, end=0.4, word="Wait"),
+                        SimpleNamespace(start=0.45, end=0.8, word="no"),
+                        SimpleNamespace(start=0.85, end=1.2, word="way!"),
+                    ],
+                )
+                return [fake_seg], SimpleNamespace(language="en")
+
+        with (
+            patch("backend.services.caption_service._get_whisper_model", return_value=_FakeModel()),
+            patch(
+                "faster_whisper.audio.decode_audio",
+                side_effect=AssertionError("decode_audio / av.open must not be called"),
+            ),
+        ):
+            segs = transcribe_clip(src, 0.0, 2.0, settings.ffmpeg_path, "base")
+            words, win_segs = transcribe_window_words(src, 0.5, 1.9, settings.ffmpeg_path, "base")
+
+        assert len(received_audio) == 2
+        for arr in received_audio:
+            assert isinstance(arr, np.ndarray)
+            assert arr.dtype == np.float32
+            assert arr.ndim == 1
+            assert arr.size > 16000
+        assert len(segs) == 1
+        assert segs[0].text == "Wait no way!"
+        assert len(words) == 3
+        assert words[0].start == pytest.approx(0.6)
+        assert len(win_segs) == 1

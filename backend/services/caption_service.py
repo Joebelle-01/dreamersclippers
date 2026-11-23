@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
 import subprocess
 import tempfile
 import threading
+import wave
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 from backend.config import resolve_ffmpeg_path
 from backend.models import CaptionSegment, CaptionWord
@@ -72,11 +76,23 @@ def _format_srt_time(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{ms:03d}"
 
 
-def _get_whisper_model(model_size: str) -> Any:
+def _cuda_cublas_available() -> bool:
+    """Return True if cublas64_12 (required by CTranslate2 CUDA on Windows) is loadable."""
+    if os.name != "nt":
+        return True
+    try:
+        ctypes.WinDLL("cublas64_12.dll")
+        return True
+    except OSError:
+        return False
+
+
+def _get_whisper_model(model_size: str, *, force_cpu: bool = False) -> Any:
     """Lazily initialize and cache a faster-whisper model (CUDA float16 -> CPU int8 fallback)."""
     normalized = (model_size or "base").strip() or "base"
+    cache_key = f"{normalized}:cpu" if force_cpu else normalized
     with _MODEL_LOCK:
-        cached = _MODEL_CACHE.get(normalized)
+        cached = _MODEL_CACHE.get(cache_key)
         if cached is not None:
             return cached
 
@@ -84,17 +100,24 @@ def _get_whisper_model(model_size: str) -> Any:
         os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
         from faster_whisper import WhisperModel
 
-        try:
-            model = WhisperModel(normalized, device="cuda", compute_type="float16")
-            logger.info("Loaded faster-whisper '%s' on CUDA float16", normalized)
-        except Exception as exc:
-            logger.warning(
-                "CUDA faster-whisper init unavailable (%s); falling back to CPU int8",
-                exc,
-            )
-            model = WhisperModel(normalized, device="cpu", compute_type="int8")
+        model: Any = None
+        if not force_cpu and _cuda_cublas_available():
+            try:
+                model = WhisperModel(normalized, device="cuda", compute_type="float16")
+                logger.info("Loaded faster-whisper '%s' on CUDA float16", normalized)
+            except Exception as exc:
+                logger.warning(
+                    "CUDA faster-whisper init unavailable (%s); falling back to CPU int8",
+                    exc,
+                )
+                model = None
 
-        _MODEL_CACHE[normalized] = model
+        if model is None:
+            model = WhisperModel(normalized, device="cpu", compute_type="int8")
+            logger.info("Loaded faster-whisper '%s' on CPU int8", normalized)
+            _MODEL_CACHE[f"{normalized}:cpu"] = model
+
+        _MODEL_CACHE[cache_key] = model
         return model
 
 
@@ -222,6 +245,23 @@ def _extract_wav_audio(
     return wav_path.is_file() and wav_path.stat().st_size > 44
 
 
+def _load_wav_float32(wav_path: Path) -> np.ndarray:
+    """Load a 16 kHz mono s16le WAV file into a 1D float32 array in [-1.0, 1.0].
+
+    Passing a float32 NumPy array directly to faster-whisper's WhisperModel.transcribe()
+    bypasses faster_whisper.audio.decode_audio(), which calls av.open(..., metadata_errors="ignore")
+    and fails on PyAV 19+ where metadata_errors was removed.
+    """
+    with wave.open(str(wav_path), "rb") as wf:
+        frame_count = wf.getnframes()
+        if frame_count <= 0:
+            return np.zeros(0, dtype=np.float32)
+        pcm_bytes = wf.readframes(frame_count)
+    if not pcm_bytes:
+        return np.zeros(0, dtype=np.float32)
+    return np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+
+
 def _transcribe_wav_words(
     wav_path: Path,
     model_size: str,
@@ -229,12 +269,34 @@ def _transcribe_wav_words(
     offset_sec: float = 0.0,
 ) -> tuple[list[CaptionWord], list[dict[str, Any]]]:
     """Run Whisper over a pre-extracted WAV file and collect words + sentence segments."""
+    audio_samples = _load_wav_float32(wav_path)
+    if audio_samples.size == 0:
+        return [], []
+
     model = _get_whisper_model(model_size)
-    raw_segments, _info = model.transcribe(
-        str(wav_path),
-        word_timestamps=True,
-        vad_filter=True,
-    )
+    try:
+        raw_iter, _info = model.transcribe(
+            audio_samples,
+            word_timestamps=True,
+            vad_filter=True,
+        )
+        raw_segments = list(raw_iter)
+    except RuntimeError as exc:
+        err_lower = str(exc).lower()
+        if any(tok in err_lower for tok in ("cublas", "cudnn", "cuda")):
+            logger.warning(
+                "CUDA runtime library missing during Whisper transcribe (%s); retrying on CPU int8",
+                exc,
+            )
+            model = _get_whisper_model(model_size, force_cpu=True)
+            raw_iter, _info = model.transcribe(
+                audio_samples,
+                word_timestamps=True,
+                vad_filter=True,
+            )
+            raw_segments = list(raw_iter)
+        else:
+            raise
 
     base_offset = max(0.0, float(offset_sec))
     collected_words: list[CaptionWord] = []

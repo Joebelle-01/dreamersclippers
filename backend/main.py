@@ -1192,14 +1192,22 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         if not raw_path.is_file():
             raise HTTPException(status_code=404, detail="Raw clip video file not found")
 
-        segments = await asyncio.to_thread(
-            transcribe_clip,
-            raw_path,
-            trim_start,
-            trim_end,
-            settings.ffmpeg_path,
-            settings.whisper_model,
-        )
+        try:
+            segments = await asyncio.to_thread(
+                transcribe_clip,
+                raw_path,
+                trim_start,
+                trim_end,
+                settings.ffmpeg_path,
+                settings.whisper_model,
+            )
+        except Exception as exc:
+            logger.exception("Caption generation failed for clip %s", clip_id)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Caption generation failed: {exc}",
+            ) from exc
+
         encoded_captions = json.dumps([seg.model_dump() for seg in segments])
 
         with session_factory() as session:
@@ -1208,6 +1216,9 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(status_code=404, detail="Clip not found")
             clip.captions_json = encoded_captions
             clip.captions_enabled = True
+            clip.error_message = None
+            if clip.status == "failed":
+                clip.status = "pending_review"
             session.add(clip)
             session.commit()
             session.refresh(clip)
