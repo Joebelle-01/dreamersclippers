@@ -90,6 +90,9 @@ Settings can be overridden via `STREAMCLIPPERS_*` environment variables or a loc
 - `STREAMCLIPPERS_WHISPER_MODEL` (default: `base`)
 - `STREAMCLIPPERS_FFMPEG_PATH` / `STREAMCLIPPERS_FFPROBE_PATH`
 - `STREAMCLIPPERS_TWITCH_CLIENT_ID` / `STREAMCLIPPERS_TWITCH_CLIENT_SECRET` *(optional)*
+- `STREAMCLIPPERS_MAX_CONCURRENT_ANALYSIS_JOBS` / `STREAMCLIPPERS_MAX_PENDING_ANALYSIS_JOBS` (defaults: `2` / `6`; prevents CPU/GPU and disk exhaustion)
+- `STREAMCLIPPERS_ANALYSIS_JOB_RETENTION_SEC` (default: `3600`; completed/failed in-memory job records expire automatically)
+- `STREAMCLIPPERS_API_ACCESS_TOKEN` *(optional; required defense-in-depth if the app is exposed beyond localhost)*. Send it as `Authorization: Bearer <token>`. For the bundled frontend, place the same value in an uncommitted `frontend/.env.local` as `VITE_STREAMCLIPPERS_API_TOKEN=<token>` before building. The live WebSocket additionally validates its browser origin when this protection is enabled. A Vite `VITE_*` value is embedded in the browser bundle, so use a reverse-proxy identity layer for real multi-user or internet-facing deployments.
 
 ---
 

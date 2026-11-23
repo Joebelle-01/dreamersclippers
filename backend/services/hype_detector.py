@@ -471,8 +471,10 @@ class HypeDetector:
                 and (eval_ts - self._last_trigger_ts) < self.cooldown_sec
             )
             if in_cooldown:
-                assert self._last_trigger_ts is not None
-                remaining = max(0.0, self.cooldown_sec - (eval_ts - self._last_trigger_ts))
+                last_trigger_ts = self._last_trigger_ts
+                if last_trigger_ts is None:
+                    raise RuntimeError("Cooldown state is missing its trigger timestamp")
+                remaining = max(0.0, self.cooldown_sec - (eval_ts - last_trigger_ts))
                 reason = f"Cooldown active ({remaining:.1f}s remaining)"
             elif self._in_hype_window:
                 reason = "Sustained hype window (hysteresis lock)"

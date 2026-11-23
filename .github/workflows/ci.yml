@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install Python dependencies
+        run: uv sync --all-groups
+      - name: Test and lint backend
+        run: |
+          uv run pytest -q -W error::pytest.PytestDeprecationWarning
+          uv run ruff check backend tests
+          uv run bandit -ll -r backend -x tests
+          uv run pip-audit
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Build and audit frontend
+        working-directory: frontend
+        run: |
+          npm run build
+          npm audit --omit=dev

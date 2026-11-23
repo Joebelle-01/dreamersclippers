@@ -323,7 +323,10 @@ class ChannelRingBuffer:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-            assert streamlink_proc.stdout is not None
+            if streamlink_proc.stdout is None:
+                streamlink_proc.kill()
+                streamlink_proc.wait(timeout=5)
+                raise RuntimeError("Streamlink stdout pipe was not created")
             ffmpeg_proc = subprocess.Popen(
                 ffmpeg_cmd,
                 shell=False,

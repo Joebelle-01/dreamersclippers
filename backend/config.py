@@ -173,6 +173,9 @@ class Settings(BaseSettings):
     ring_segment_wrap: int = 60
     whisper_model: str = "base"
     max_upload_bytes: int = 4 * 1024 * 1024 * 1024
+    max_concurrent_analysis_jobs: int = Field(default=2, ge=1, le=8)
+    max_pending_analysis_jobs: int = Field(default=6, ge=1, le=32)
+    analysis_job_retention_sec: int = Field(default=3600, ge=60, le=86_400)
 
     cors_origins: list[str] = Field(
         default_factory=lambda: [
@@ -190,6 +193,7 @@ class Settings(BaseSettings):
     twitch_client_id: str = ""
     twitch_client_secret: str = ""
     twitch_credentials_path: Path = PROJECT_ROOT / "data" / "twitch_credentials.json"
+    api_access_token: str = ""
 
     @model_validator(mode="after")
     def _derive_paths_and_tools(self) -> Settings:

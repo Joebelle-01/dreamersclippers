@@ -127,7 +127,8 @@ def _scan_audio_timeline_sync(video_path: Path, ffmpeg_path: str) -> list[tuple[
     samples: list[tuple[float, float]] = []
     sec_idx = 0
     try:
-        assert proc.stdout is not None
+        if proc.stdout is None:
+            raise RuntimeError("FFmpeg audio stdout pipe was not created")
         while True:
             chunk = proc.stdout.read(_AUDIO_1S_BYTES)
             if not chunk:
@@ -174,7 +175,8 @@ def _scan_motion_timeline_sync(video_path: Path, ffmpeg_path: str) -> list[tuple
     prev_gray: np.ndarray | None = None
     frame_idx = 0
     try:
-        assert proc.stdout is not None
+        if proc.stdout is None:
+            raise RuntimeError("FFmpeg motion stdout pipe was not created")
         while True:
             buf = bytearray()
             while len(buf) < _MOTION_FRAME_BYTES:
@@ -433,7 +435,8 @@ async def scan_twitch_vod(
     """Download a Twitch VOD, detect top hype peaks, and save pending review clips."""
     safe_url = validate_twitch_vod_url(vod_url)
     id_match = _VOD_ID_RE.search(safe_url)
-    assert id_match is not None
+    if id_match is None:
+        raise ValueError("Validated Twitch VOD URL did not contain a VOD identifier")
     vod_id = id_match.group(1)
     active_job_id = job_id or str(uuid4())
     effective_threshold = float(hype_threshold if hype_threshold is not None else settings.hype_threshold)

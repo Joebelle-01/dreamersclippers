@@ -12,6 +12,7 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 import backend.main as backend_main
 from backend.config import Settings
@@ -112,6 +113,32 @@ class TestSystemAndChannelsApi:
         assert isinstance(body["nvenc_available"], bool)
         assert Path(body["ffmpeg_path"]).is_file()
         assert Path(body["ffprobe_path"]).is_file()
+
+    def test_configured_access_token_protects_http_api(
+        self, tmp_path: Path
+    ) -> None:
+        settings = Settings(data_dir=tmp_path / "data", api_access_token="test-token")
+        app = create_app(custom_settings=settings)
+        with TestClient(app) as client:
+            denied = client.get("/api/system/status")
+            assert denied.status_code == 401
+            assert denied.json()["detail"] == "Authentication required"
+
+            allowed = client.get(
+                "/api/system/status",
+                headers={"Authorization": "Bearer test-token"},
+            )
+            assert allowed.status_code == 200
+
+            with pytest.raises(WebSocketDisconnect):
+                with client.websocket_connect("/ws/live"):
+                    pass
+
+            with client.websocket_connect(
+                "/ws/live?access_token=test-token",
+                headers={"origin": "http://127.0.0.1:5174"},
+            ) as websocket:
+                assert websocket.receive_json()["type"] == "monitor_status"
 
     def test_channel_crud_lifecycle(
         self, api_client: tuple[TestClient, object, Settings]
