@@ -161,7 +161,7 @@ class Settings(BaseSettings):
     port: int = 8430
 
     hype_threshold: float = 68.0
-    pre_roll_sec: int = 25
+    pre_roll_sec: int = 60
     post_roll_sec: int = 15
     cooldown_sec: int = 35
     weight_chat: float = 0.50
@@ -170,8 +170,9 @@ class Settings(BaseSettings):
     default_split_ratio: float = 0.35
 
     ring_segment_seconds: int = 4
-    ring_segment_wrap: int = 35
+    ring_segment_wrap: int = 60
     whisper_model: str = "base"
+    max_upload_bytes: int = 4 * 1024 * 1024 * 1024
 
     cors_origins: list[str] = Field(
         default_factory=lambda: [

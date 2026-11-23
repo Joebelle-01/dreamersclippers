@@ -27,9 +27,16 @@ interface ChannelRailProps {
   onDeleteChannel: (channelId: number) => Promise<void>
   onStartMonitor: (channelId: number) => Promise<void>
   onStopMonitor: (channelId: number) => Promise<void>
-  onClipNow: (channelId: number) => Promise<void>
+  onClipNow: (channelId: number, durationSec?: number) => Promise<void>
   onPublishClip: (channelId: number) => Promise<PublishClipResponse>
   onCreateMarker: (channelId: number) => Promise<StreamMarkerResponse>
+}
+
+function defaultClipNowSec(ch: Channel): number {
+  if (ch.pre_roll_sec >= 180) return 180
+  if (ch.pre_roll_sec >= 120) return 120
+  if (ch.pre_roll_sec >= 90) return 90
+  return 60
 }
 
 export function ChannelRail({
@@ -79,6 +86,7 @@ export function ChannelRail({
   const [twitchFeedback, setTwitchFeedback] = useState<
     Record<number, { text: string; editUrl?: string }>
   >({})
+  const [clipDurationByChannel, setClipDurationByChannel] = useState<Record<number, number>>({})
 
   const trimmedLogin = loginInput.trim()
   const extractedLogin = extractTwitchLogin(trimmedLogin)
@@ -164,14 +172,14 @@ export function ChannelRail({
       hypeThreshold > 100 ||
       !Number.isFinite(preRoll) ||
       preRoll < 5 ||
-      preRoll > 120 ||
+      preRoll > 180 ||
       !Number.isFinite(postRoll) ||
       postRoll < 5 ||
-      postRoll > 60
+      postRoll > 120
     ) {
       setActionErrors((prev) => ({
         ...prev,
-        [ch.id]: 'Threshold 10 to 100, pre-roll 5 to 120s, post-roll 5 to 60s.',
+        [ch.id]: 'Threshold 10 to 100, pre-roll 5 to 180s, post-roll 5 to 120s.',
       }))
       return
     }
@@ -433,61 +441,82 @@ export function ChannelRail({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={toggleBusy}
-                      aria-busy={toggleBusy}
-                      onClick={() =>
-                        runChannelAction(ch.id, `toggle-${ch.id}`, () =>
-                          ch.is_monitoring ? onStopMonitor(ch.id) : onStartMonitor(ch.id),
-                        )
-                      }
-                      className={`btn btn--compact flex-1 ${
-                        ch.is_monitoring ? 'btn--danger' : 'btn--accent-outline'
-                      }`}
-                    >
-                      {toggleBusy ? (
-                        <span className="desk-spinner" aria-hidden="true" />
-                      ) : ch.is_monitoring ? (
-                        <Square size={13} aria-hidden="true" />
-                      ) : (
-                        <Play size={13} aria-hidden="true" />
-                      )}
-                      <span>{ch.is_monitoring ? 'Stop' : 'Monitor'}</span>
-                    </button>
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={toggleBusy}
+                        aria-busy={toggleBusy}
+                        onClick={() =>
+                          runChannelAction(ch.id, `toggle-${ch.id}`, () =>
+                            ch.is_monitoring ? onStopMonitor(ch.id) : onStartMonitor(ch.id),
+                          )
+                        }
+                        className={`btn btn--compact flex-1 ${
+                          ch.is_monitoring ? 'btn--danger' : 'btn--accent-outline'
+                        }`}
+                      >
+                        {toggleBusy ? (
+                          <span className="desk-spinner" aria-hidden="true" />
+                        ) : ch.is_monitoring ? (
+                          <Square size={13} aria-hidden="true" />
+                        ) : (
+                          <Play size={13} aria-hidden="true" />
+                        )}
+                        <span>{ch.is_monitoring ? 'Stop' : 'Monitor'}</span>
+                      </button>
 
-                    <button
-                      type="button"
-                      disabled={!ch.is_monitoring || clipBusy}
-                      aria-busy={clipBusy}
-                      title={
-                        ch.is_monitoring
-                          ? 'Save rolling buffer clip right now'
-                          : 'Start monitoring to buffer video before clipping'
-                      }
-                      onClick={() =>
-                        runChannelAction(ch.id, `clip-${ch.id}`, () => onClipNow(ch.id))
-                      }
-                      className="btn btn--compact btn--quiet flex-1"
-                    >
-                      {clipBusy ? (
-                        <span className="desk-spinner" aria-hidden="true" />
-                      ) : (
-                        <Scissors size={13} aria-hidden="true" />
-                      )}
-                      <span>Clip Now</span>
-                    </button>
+                      <button
+                        type="button"
+                        aria-label={`Configure ${ch.channel_login}`}
+                        aria-expanded={isTuning}
+                        onClick={() => openTuning(ch)}
+                        className="btn btn--compact btn--quiet"
+                      >
+                        <SlidersHorizontal size={14} aria-hidden="true" />
+                      </button>
+                    </div>
 
-                    <button
-                      type="button"
-                      aria-label={`Configure ${ch.channel_login}`}
-                      aria-expanded={isTuning}
-                      onClick={() => openTuning(ch)}
-                      className="btn btn--compact btn--quiet"
-                    >
-                      <SlidersHorizontal size={14} aria-hidden="true" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={!ch.is_monitoring || clipBusy}
+                        aria-busy={clipBusy}
+                        title={
+                          ch.is_monitoring
+                            ? 'Save rolling buffer clip right now'
+                            : 'Start monitoring to buffer video before clipping'
+                        }
+                        onClick={() => {
+                          const sec = clipDurationByChannel[ch.id] ?? defaultClipNowSec(ch)
+                          void runChannelAction(ch.id, `clip-${ch.id}`, () => onClipNow(ch.id, sec))
+                        }}
+                        className="btn btn--compact btn--quiet flex-1"
+                      >
+                        {clipBusy ? (
+                          <span className="desk-spinner" aria-hidden="true" />
+                        ) : (
+                          <Scissors size={13} aria-hidden="true" />
+                        )}
+                        <span>Clip Now</span>
+                      </button>
+
+                      <select
+                        aria-label={`Clip duration for ${ch.channel_login}`}
+                        disabled={clipBusy}
+                        value={String(clipDurationByChannel[ch.id] ?? defaultClipNowSec(ch))}
+                        onChange={(e) => {
+                          const val = Number(e.target.value)
+                          setClipDurationByChannel((prev) => ({ ...prev, [ch.id]: val }))
+                        }}
+                        className="field-select num w-20 shrink-0"
+                      >
+                        <option value="60">60s</option>
+                        <option value="90">90s</option>
+                        <option value="120">120s</option>
+                        <option value="180">180s</option>
+                      </select>
+                    </div>
                   </div>
 
                   {chErr && (
@@ -526,7 +555,7 @@ export function ChannelRail({
                             id={`pre-${ch.id}`}
                             type="number"
                             min={5}
-                            max={120}
+                            max={180}
                             value={draft.pre_roll_sec}
                             onChange={(e) =>
                               setTuningDrafts((prev) => ({
@@ -545,7 +574,7 @@ export function ChannelRail({
                             id={`post-${ch.id}`}
                             type="number"
                             min={5}
-                            max={60}
+                            max={120}
                             value={draft.post_roll_sec}
                             onChange={(e) =>
                               setTuningDrafts((prev) => ({

@@ -9,9 +9,9 @@ Self-hosted real-time Twitch live stream and VOD auto-clipper with an integrated
 ## Key Capabilities
 
 - **Live Multi-Signal Hype Detection**: Combines Twitch IRC chat velocity and hype keywords, FFmpeg audio RMS dBFS bursts, OpenCV frame motion, and optional Twitch Helix Clip surge signals with adaptive quiet-chat weighting and anti-spam unique-chatter gating.
-- **Rolling 140-Second MPEG-TS Ring Buffer**: Continuously records live streams via Streamlink + FFmpeg into bounded 4-second rolling segments (`35` segments) for instant `-c copy` snapshot remuxing on hype triggers or manual **Clip Now** (no re-encode during capture).
+- **Rolling 240-Second MPEG-TS Ring Buffer**: Continuously records live streams via Streamlink + FFmpeg into bounded 4-second rolling segments (`60` segments) for instant `-c copy` snapshot remuxing on hype triggers or manual **Clip Now** (`60s` / `90s` / `120s` / `180s`, no re-encode during capture).
 - **Opt-In Live Twitch Preview & Chat**: Toggle an embedded Twitch player and dark-popout chat directly inside the Live Radar panel while monitoring.
-- **Twitch VOD Scanner & Top Clips Importer**: Scan public `https://twitch.tv/videos/<id>` VODs via `yt-dlp` for top non-overlapping hype peaks, or browse and import existing Twitch Top Clips directly into your Review Queue.
+- **Full-Video Viral Analyzer (`Analyze Video`)**: Analyze any recorded video—**local uploads** (`.mp4`, `.mkv`, `.mov`, `.webm`, `.m4v`), **YouTube** URLs, or **Twitch VOD** URLs—with a 5-factor local viral scoring engine (hook strength, audio energy, emotional reaction payoff, speech pacing, and visual motion) aligned to natural sentence boundaries with pre-populated captions, plus a Twitch Top Clips importer.
 - **Smart Webcam & Gameplay Framing**: Automatically detects streamer facecam bounds (`split_top_cam`) or falls back to `blur_no_cam`, paired with interactive draggable/resizable crop boxes and saved per-channel presets.
 - **Hardware-Accelerated 9:16 Export**: Renders `1080x1920` MP4s (`setsar=1`, optional `-14 LUFS` loudnorm audio) using `h264_nvenc` on NVIDIA GPUs with automatic `libx264` CPU fallback.
 - **Local Closed Captions (`faster-whisper`)**: Generate word/segment captions locally before downloading, edit lines inline with live `<canvas>` preview, choose **Split-Seam** or **Lower-Safe** placement, burn subtitles directly into the 9:16 MP4, and export `.srt`.
@@ -68,7 +68,8 @@ Self-hosted real-time Twitch live stream and VOD auto-clipper with an integrated
 
 - `GET /api/system/status` — FFmpeg/`ffprobe` paths, NVENC/GPU status, active monitor and clip counts
 - `GET/POST/PATCH/DELETE /api/channels` — Channel monitor CRUD and per-channel thresholds/presets
-- `POST /api/channels/{channel_id}/start|stop|clip-now` — Live monitor control and instant capture
+- `POST /api/channels/{channel_id}/start|stop|clip-now` — Live monitor control and instant capture (`60s`–`180s`)
+- `POST /api/videos/analyze-url`, `POST /api/videos/analyze-upload`, `GET /api/videos/jobs/{job_id}` — Full-video non-live viral moment analyzer (YouTube, Twitch VOD, or local video upload)
 - `POST /api/vods/scan` — Queue a background Twitch VOD hype scan
 - `GET/PATCH/DELETE /api/clips` — Review Queue listing, trim/crop/caption updates, and delete
 - `POST /api/clips/{clip_id}/detect-webcam|save-preset|captions/generate|thumbnail|render` — Framing detection, preset save, Whisper CC generation, thumbnail capture, and 9:16 MP4 export
@@ -85,7 +86,7 @@ Settings can be overridden via `STREAMCLIPPERS_*` environment variables or a loc
 - `STREAMCLIPPERS_DATA_DIR` (default: `./data`)
 - `STREAMCLIPPERS_HOST` / `STREAMCLIPPERS_PORT` (defaults: `127.0.0.1` / `8430`)
 - `STREAMCLIPPERS_HYPE_THRESHOLD` (default: `68.0`)
-- `STREAMCLIPPERS_PRE_ROLL_SEC` / `STREAMCLIPPERS_POST_ROLL_SEC` / `STREAMCLIPPERS_COOLDOWN_SEC` (defaults: `25` / `15` / `35`)
+- `STREAMCLIPPERS_PRE_ROLL_SEC` / `STREAMCLIPPERS_POST_ROLL_SEC` / `STREAMCLIPPERS_COOLDOWN_SEC` (defaults: `60` / `15` / `35`)
 - `STREAMCLIPPERS_WHISPER_MODEL` (default: `base`)
 - `STREAMCLIPPERS_FFMPEG_PATH` / `STREAMCLIPPERS_FFPROBE_PATH`
 - `STREAMCLIPPERS_TWITCH_CLIENT_ID` / `STREAMCLIPPERS_TWITCH_CLIENT_SECRET` *(optional)*

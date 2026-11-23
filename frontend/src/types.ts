@@ -107,7 +107,7 @@ export interface ClipItem {
   id: string
   channel_id: number
   channel_login: string
-  source_type: 'live' | 'vod' | 'twitch_clip' | string
+  source_type: 'live' | 'vod' | 'twitch_clip' | 'youtube_vod' | 'video_upload' | string
   source_ref: string
   title: string
   status: ClipStatus
@@ -186,6 +186,33 @@ export interface VodScanRequest {
 export interface VodScanResponse {
   job_id: string
   status: string
+}
+
+export interface VideoAnalyzeUrlRequest {
+  video_url: string
+  channel_id?: number | null
+  max_clips?: number
+  min_clip_sec?: number
+  max_clip_sec?: number
+  viral_threshold?: number
+  use_speech_analysis?: boolean
+}
+
+export interface VideoAnalyzeUploadParams {
+  file: File
+  channel_id?: number | null
+  max_clips?: number
+  min_clip_sec?: number
+  max_clip_sec?: number
+  viral_threshold?: number
+  use_speech_analysis?: boolean
+}
+
+export interface VideoAnalyzeResponse {
+  job_id: string
+  status: string
+  platform?: string
+  source_type?: string
 }
 
 export interface TwitchStatus {

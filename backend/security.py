@@ -6,7 +6,7 @@ import math
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -16,6 +16,9 @@ _TWITCH_VOD_PATH_RE = re.compile(r"^/videos/(\d{1,20})/?$")
 _TWITCH_CLIP_HOST_PATH_RE = re.compile(r"^/([a-zA-Z0-9_-]{3,120})$")
 _TWITCH_CHANNEL_CLIP_PATH_RE = re.compile(r"^/([a-zA-Z0-9_]{3,25})/clip/([a-zA-Z0-9_-]{3,120})$")
 _ALLOWED_TWITCH_HOSTS = frozenset({"twitch.tv", "www.twitch.tv", "m.twitch.tv"})
+_ALLOWED_YOUTUBE_HOSTS = frozenset({"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"})
+_YOUTUBE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+_ALLOWED_VIDEO_EXTENSIONS = frozenset({".mp4", ".mkv", ".mov", ".webm", ".m4v"})
 _RESERVED_TWITCH_PATHS = frozenset(
     {
         "videos",
@@ -203,6 +206,73 @@ def validate_twitch_clip_url(url: str) -> str:
         return f"https://{host}/{login}/clip/{slug}"
 
     raise ValueError("Host must be clips.twitch.tv, twitch.tv, www.twitch.tv, or m.twitch.tv")
+
+
+def validate_video_url(url: str) -> tuple[str, str]:
+    """Validate an HTTPS YouTube or Twitch VOD URL and return (canonical_url, platform)."""
+    if not isinstance(url, str):
+        raise ValueError("Video URL must be a string")
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in url):
+        raise ValueError("Video URL contains control characters")
+    cleaned = url.strip()
+    if not cleaned or any(ch.isspace() for ch in cleaned):
+        raise ValueError("Video URL must not be empty or contain whitespace")
+
+    parsed = urlsplit(cleaned)
+    if parsed.scheme != "https":
+        raise ValueError("Only https:// video URLs are allowed")
+    if parsed.username is not None or parsed.password is not None or parsed.port is not None:
+        raise ValueError("Video URL must not contain credentials or custom ports")
+
+    host = parsed.netloc.lower()
+    if host in _ALLOWED_TWITCH_HOSTS:
+        return validate_twitch_vod_url(cleaned), "twitch_vod"
+
+    if host in _ALLOWED_YOUTUBE_HOSTS:
+        trimmed_path = parsed.path.rstrip("/")
+        video_id = ""
+        if host == "youtu.be":
+            parts = [p for p in trimmed_path.split("/") if p]
+            if len(parts) == 1 and _YOUTUBE_ID_RE.fullmatch(parts[0]):
+                video_id = parts[0]
+        else:
+            if trimmed_path == "/watch":
+                qs = parse_qs(parsed.query, keep_blank_values=False)
+                v_vals = qs.get("v", [])
+                if len(v_vals) == 1 and _YOUTUBE_ID_RE.fullmatch(v_vals[0]):
+                    video_id = v_vals[0]
+            else:
+                parts = [p for p in trimmed_path.split("/") if p]
+                if len(parts) == 2 and parts[0] in {"live", "shorts"} and _YOUTUBE_ID_RE.fullmatch(parts[1]):
+                    video_id = parts[1]
+
+        if not video_id:
+            raise ValueError(
+                "YouTube URL must be https://www.youtube.com/watch?v=<id>, /shorts/<id>, /live/<id>, or https://youtu.be/<id>"
+            )
+        return f"https://www.youtube.com/watch?v={video_id}", "youtube"
+
+    raise ValueError("Only HTTPS YouTube and Twitch VOD URLs are permitted")
+
+
+def validate_video_upload_filename(filename: str) -> str:
+    """Validate an uploaded video filename and return its lowercase extension."""
+    if not isinstance(filename, str):
+        raise ValueError("Uploaded filename must be a string")
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in filename):
+        raise ValueError("Uploaded filename contains control characters")
+    cleaned = filename.strip()
+    if not cleaned:
+        raise ValueError("Uploaded filename must not be empty")
+    if "/" in cleaned or "\\" in cleaned or ".." in cleaned:
+        raise ValueError("Uploaded filename must not contain path separators or traversal sequences")
+
+    base = Path(cleaned).name
+    suffix = Path(base).suffix.lower()
+    if not suffix or suffix not in _ALLOWED_VIDEO_EXTENSIONS:
+        allowed = ", ".join(sorted(_ALLOWED_VIDEO_EXTENSIONS))
+        raise ValueError(f"Unsupported video file type; allowed extensions: {allowed}")
+    return suffix
 
 
 def validate_crop_box(box: dict[str, Any] | CropBox) -> CropBox:

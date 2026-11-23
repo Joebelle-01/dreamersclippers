@@ -88,6 +88,14 @@ function formatStatusLabel(status: ClipStatus): string {
   return 'Discarded'
 }
 
+function formatSourceBadge(sourceType: string): string {
+  if (sourceType === 'youtube_vod') return 'YouTube'
+  if (sourceType === 'video_upload') return 'Upload'
+  if (sourceType === 'vod') return 'VOD'
+  if (sourceType === 'twitch_clip') return 'Clip'
+  return 'Live'
+}
+
 export function ReviewWorkbench({
   clips,
   loading,
@@ -829,12 +837,12 @@ export function ReviewWorkbench({
                     : 'No captured clips yet.'}
               </p>
               <p className="text-sm text-muted">
-                Monitor a live Twitch channel or scan a past VOD to populate the editing bay.
+                Monitor a live Twitch channel or analyze any full video to find viral clips.
               </p>
             </div>
             <button type="button" onClick={onOpenVodModal} className="btn btn--accent-outline">
               <Video size={15} aria-hidden="true" />
-              <span>Scan Twitch VOD</span>
+              <span>Analyze Video</span>
             </button>
           </div>
         ) : (
@@ -894,6 +902,9 @@ export function ReviewWorkbench({
             <div className="min-w-0">
               <div className="flex items-center gap-3 flex-wrap">
                 <h3 className="section-title text-ink">{selectedClip.title}</h3>
+                <span className="px-2 py-0.5 border border-rule text-xs font-medium text-muted">
+                  {formatSourceBadge(selectedClip.source_type)}
+                </span>
                 <span
                   className={`px-2 py-0.5 border text-xs font-medium ${
                     selectedClip.status === 'exported'
@@ -909,7 +920,12 @@ export function ReviewWorkbench({
                 </span>
               </div>
               <p className="text-sm text-muted mt-1">
-                Channel @{selectedClip.channel_login}, trigger: {selectedClip.trigger_reason || 'manual'}, hype score{' '}
+                @{selectedClip.channel_login}, {selectedClip.trigger_reason || 'manual'},{' '}
+                {selectedClip.source_type === 'youtube_vod' ||
+                selectedClip.source_type === 'video_upload' ||
+                selectedClip.source_type === 'vod'
+                  ? 'viral score'
+                  : 'hype score'}{' '}
                 <span className="num text-ink">{selectedClip.hype_score.toFixed(1)}</span>
               </p>
             </div>
@@ -1588,12 +1604,12 @@ export function ReviewWorkbench({
           <div className="desk-well grained max-w-lg w-full p-8 border border-rule flex flex-col gap-4">
             <h3 className="section-title text-ink">Stage ready for incoming hype clips</h3>
             <p className="text-sm text-ink-2">
-              Start live monitoring on a channel in the left rail, trigger an instant buffer capture with Clip Now, or scan a Twitch VOD URL to detect peak moments and webcam bounds automatically.
+              Start live monitoring on a channel in the left rail, trigger an instant buffer capture with Clip Now, or analyze a recorded video / URL to extract top viral moments automatically.
             </p>
             <div className="flex items-center gap-3 flex-wrap">
               <button type="button" onClick={onOpenVodModal} className="btn btn--primary">
                 <Video size={16} aria-hidden="true" />
-                <span>Scan Twitch VOD</span>
+                <span>Analyze Video</span>
               </button>
             </div>
           </div>

@@ -214,6 +214,7 @@ class LiveManager:
         evaluation: HypeEvaluation,
         *,
         source_reason: str,
+        pre_roll_override: float | None = None,
         post_roll_override: float | None = None,
         clip_title_prefix: str = "Live Hype",
     ) -> ClipItem:
@@ -227,7 +228,11 @@ class LiveManager:
         if snap is None:
             raise ValueError(f"Channel {monitor.channel_id} no longer exists")
 
-        pre_roll = snap.pre_roll_sec
+        pre_roll = (
+            snap.pre_roll_sec
+            if pre_roll_override is None
+            else max(5.0, float(pre_roll_override))
+        )
         post_roll = snap.post_roll_sec if post_roll_override is None else max(0.0, post_roll_override)
         clip_id = str(uuid4())
         raw_clip_path = safe_resolve_under(self.settings.clips_dir, f"{clip_id}.mp4")
@@ -787,7 +792,7 @@ class LiveManager:
             with suppress(Exception):
                 await self._poll_helix_once()
 
-    async def clip_now(self, channel_id: int) -> ClipItem:
+    async def clip_now(self, channel_id: int, duration_sec: float | None = None) -> ClipItem:
         """Immediately snapshot a clip from the active channel ring buffer."""
         monitor = self._monitors.get(channel_id)
         if monitor is None:
@@ -803,6 +808,7 @@ class LiveManager:
             monitor,
             ev,
             source_reason="Manual Clip Now trigger",
+            pre_roll_override=duration_sec,
             post_roll_override=0.0,
             clip_title_prefix="Manual Clip",
         )

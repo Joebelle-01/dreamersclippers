@@ -18,6 +18,9 @@ import type {
   TwitchClipSummary,
   TwitchOAuthStartResponse,
   TwitchStatus,
+  VideoAnalyzeResponse,
+  VideoAnalyzeUploadParams,
+  VideoAnalyzeUrlRequest,
   VodScanRequest,
   VodScanResponse,
 } from './types'
@@ -151,6 +154,45 @@ export function isValidTwitchLogin(raw: string): boolean {
 
 export function isValidTwitchVodUrl(raw: string): boolean {
   return /^https:\/\/(www\.|m\.)?twitch\.tv\/videos\/\d+\/?$/.test(raw.trim())
+}
+
+const ALLOWED_YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'])
+const YOUTUBE_ID_RE = /^[A-Za-z0-9_-]{11}$/
+
+export function detectVideoUrlPlatform(raw: string): 'youtube' | 'twitch_vod' | null {
+  const cleaned = raw.trim()
+  if (!cleaned || /\s/.test(cleaned)) {
+    return null
+  }
+  if (isValidTwitchVodUrl(cleaned)) {
+    return 'twitch_vod'
+  }
+  try {
+    const parsed = new URL(cleaned)
+    if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '' || parsed.port !== '') {
+      return null
+    }
+    const host = parsed.hostname.toLowerCase()
+    if (!ALLOWED_YOUTUBE_HOSTS.has(host)) {
+      return null
+    }
+    const trimmedPath = parsed.pathname.replace(/\/+$/, '')
+    if (host === 'youtu.be') {
+      const seg = trimmedPath.replace(/^\/+/, '')
+      return YOUTUBE_ID_RE.test(seg) ? 'youtube' : null
+    }
+    if (trimmedPath === '/watch') {
+      const vid = parsed.searchParams.get('v') ?? ''
+      return YOUTUBE_ID_RE.test(vid) ? 'youtube' : null
+    }
+    const parts = trimmedPath.split('/').filter(Boolean)
+    if (parts.length === 2 && (parts[0] === 'live' || parts[0] === 'shorts') && YOUTUBE_ID_RE.test(parts[1])) {
+      return 'youtube'
+    }
+    return null
+  } catch {
+    return null
+  }
 }
 
 export function isValidTwitchClipUrl(raw: string): boolean {
@@ -293,9 +335,10 @@ export function stopChannelMonitor(channelId: number): Promise<Channel> {
   })
 }
 
-export function triggerClipNow(channelId: number): Promise<ClipItem> {
+export function triggerClipNow(channelId: number, durationSec?: number): Promise<ClipItem> {
   return requestJson<ClipItem>(`/api/channels/${channelId}/clip-now`, {
     method: 'POST',
+    ...(durationSec != null ? { body: JSON.stringify({ duration_sec: durationSec }) } : {}),
   })
 }
 
@@ -304,6 +347,57 @@ export function startVodScan(payload: VodScanRequest): Promise<VodScanResponse> 
     method: 'POST',
     body: JSON.stringify(payload),
   })
+}
+
+export function startVideoUrlAnalysis(payload: VideoAnalyzeUrlRequest): Promise<VideoAnalyzeResponse> {
+  return requestJson<VideoAnalyzeResponse>('/api/videos/analyze-url', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function startVideoUploadAnalysis(
+  params: VideoAnalyzeUploadParams,
+): Promise<VideoAnalyzeResponse> {
+  const form = new FormData()
+  form.append('file', params.file)
+  if (params.channel_id != null) {
+    form.append('channel_id', String(params.channel_id))
+  }
+  if (params.max_clips != null) {
+    form.append('max_clips', String(params.max_clips))
+  }
+  if (params.min_clip_sec != null) {
+    form.append('min_clip_sec', String(params.min_clip_sec))
+  }
+  if (params.max_clip_sec != null) {
+    form.append('max_clip_sec', String(params.max_clip_sec))
+  }
+  if (params.viral_threshold != null) {
+    form.append('viral_threshold', String(params.viral_threshold))
+  }
+  if (params.use_speech_analysis != null) {
+    form.append('use_speech_analysis', String(params.use_speech_analysis))
+  }
+
+  const res = await fetch('/api/videos/analyze-upload', {
+    method: 'POST',
+    body: form,
+  })
+  if (!res.ok) {
+    let parsed: unknown = null
+    try {
+      parsed = await res.json()
+    } catch {
+      parsed = null
+    }
+    const fallback =
+      res.status >= 500 && parsed === null
+        ? 'Backend server unavailable on 127.0.0.1:8430.'
+        : `Upload failed with status ${res.status}`
+    throw new ApiError(res.status, extractErrorMessage(parsed, fallback))
+  }
+  return (await res.json()) as VideoAnalyzeResponse
 }
 
 export function fetchClips(params?: { status?: string; channel_id?: number }): Promise<ClipItem[]> {

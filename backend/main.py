@@ -8,6 +8,7 @@ import inspect
 import json
 import logging
 import re
+import shutil
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
@@ -20,10 +21,13 @@ import uvicorn
 from fastapi import (
     BackgroundTasks,
     FastAPI,
+    File,
+    Form,
     HTTPException,
     Query,
     Request,
     Response,
+    UploadFile,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -40,6 +44,7 @@ from backend.models import (
     ChannelRead,
     ChannelUpdate,
     ClipItem,
+    ClipNowRequest,
     ClipRead,
     ClipUpdate,
     PublishTwitchClipRequest,
@@ -48,6 +53,7 @@ from backend.models import (
     ThumbnailRequest,
     TwitchClipImportRequest,
     TwitchConfigRequest,
+    VideoAnalyzeUrlRequest,
     VodScanRequest,
     utc_now,
 )
@@ -59,6 +65,8 @@ from backend.security import (
     validate_twitch_channel,
     validate_twitch_clip_url,
     validate_twitch_vod_url,
+    validate_video_upload_filename,
+    validate_video_url,
 )
 from backend.services.caption_service import (
     build_ass_subtitles,
@@ -69,6 +77,7 @@ from backend.services.caption_service import (
 from backend.services.live_manager import LiveManager
 from backend.services.twitch_helix import TwitchHelixClient, import_twitch_clip_to_review
 from backend.services.video_renderer import render_vertical_clip, render_vertical_thumbnail
+from backend.services.viral_analyzer import analyze_local_video, analyze_video_url
 from backend.services.vod_scanner import scan_twitch_vod
 from backend.services.webcam_detector import detect_webcam
 
@@ -654,7 +663,11 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
             return ChannelRead.from_orm_row(channel)
 
     @fastapi_app.post("/api/channels/{channel_id}/clip-now", response_model=ClipRead)
-    async def clip_channel_now(channel_id: int, request: Request) -> ClipRead:
+    async def clip_channel_now(
+        channel_id: int,
+        request: Request,
+        payload: ClipNowRequest | None = None,
+    ) -> ClipRead:
         session_factory = _state_session_factory(request)
         live_manager = _state_live_manager(request)
 
@@ -664,7 +677,10 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(status_code=404, detail="Channel not found")
 
         try:
-            clip = await live_manager.clip_now(channel_id)
+            clip = await live_manager.clip_now(
+                channel_id,
+                duration_sec=payload.duration_sec if payload is not None else None,
+            )
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -734,6 +750,217 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         background_tasks.add(task)
         task.add_done_callback(background_tasks.discard)
         return {"job_id": job_id, "status": "started"}
+
+    def _schedule_video_job(
+        request: Request,
+        *,
+        job_id: str,
+        source_label: str,
+        coro_fn: Callable[[], Any],
+    ) -> None:
+        broadcast_event = request.app.state.broadcast_event
+        background_tasks: set[asyncio.Task[Any]] = request.app.state.background_tasks
+        vod_jobs: dict[str, dict[str, Any]] = request.app.state.vod_jobs
+
+        async def _runner() -> None:
+            try:
+                result = await coro_fn()
+                vod_jobs[job_id] = {
+                    **vod_jobs.get(job_id, {"job_id": job_id}),
+                    "status": "completed",
+                    "result": result,
+                }
+            except asyncio.CancelledError:
+                vod_jobs[job_id] = {
+                    **vod_jobs.get(job_id, {"job_id": job_id}),
+                    "status": "cancelled",
+                }
+                raise
+            except Exception as exc:
+                vod_jobs[job_id] = {
+                    **vod_jobs.get(job_id, {"job_id": job_id}),
+                    "status": "failed",
+                    "error": str(exc),
+                }
+                await broadcast_event(
+                    "vod_progress",
+                    {
+                        "job_id": job_id,
+                        "vod_url": source_label,
+                        "status": "failed",
+                        "progress": 0,
+                        "message": str(exc),
+                    },
+                )
+
+        task = asyncio.create_task(_runner())
+        background_tasks.add(task)
+        task.add_done_callback(background_tasks.discard)
+
+    @fastapi_app.post("/api/videos/analyze-url")
+    async def analyze_video_by_url(
+        payload: VideoAnalyzeUrlRequest,
+        request: Request,
+    ) -> dict[str, str]:
+        settings = _state_settings(request)
+        session_factory = _state_session_factory(request)
+        broadcast_event = request.app.state.broadcast_event
+        vod_jobs: dict[str, dict[str, Any]] = request.app.state.vod_jobs
+
+        try:
+            canonical_url, platform = validate_video_url(payload.video_url)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        if payload.channel_id is not None:
+            with session_factory() as session:
+                if session.get(Channel, payload.channel_id) is None:
+                    raise HTTPException(status_code=404, detail="Referenced channel not found")
+
+        job_id = str(uuid4())
+        source_type = "youtube_vod" if platform == "youtube" else "vod"
+        vod_jobs[job_id] = {
+            "job_id": job_id,
+            "status": "started",
+            "source": canonical_url,
+            "source_type": source_type,
+            "platform": platform,
+        }
+
+        _schedule_video_job(
+            request,
+            job_id=job_id,
+            source_label=canonical_url,
+            coro_fn=lambda: analyze_video_url(
+                canonical_url,
+                channel_id=payload.channel_id,
+                max_clips=payload.max_clips,
+                min_clip_sec=payload.min_clip_sec,
+                max_clip_sec=payload.max_clip_sec,
+                viral_threshold=payload.viral_threshold,
+                use_speech_analysis=payload.use_speech_analysis,
+                settings=settings,
+                session_factory=session_factory,
+                broadcast_fn=broadcast_event,
+                job_id=job_id,
+            ),
+        )
+        return {"job_id": job_id, "status": "started", "platform": platform}
+
+    @fastapi_app.post("/api/videos/analyze-upload")
+    async def analyze_video_by_upload(
+        request: Request,
+        file: Annotated[UploadFile, File()],
+        channel_id: Annotated[int | None, Form()] = None,
+        max_clips: Annotated[int, Form()] = 5,
+        min_clip_sec: Annotated[int, Form()] = 20,
+        max_clip_sec: Annotated[int, Form()] = 55,
+        viral_threshold: Annotated[float, Form()] = 50.0,
+        use_speech_analysis: Annotated[bool, Form()] = True,
+    ) -> dict[str, str]:
+        settings = _state_settings(request)
+        session_factory = _state_session_factory(request)
+        broadcast_event = request.app.state.broadcast_event
+        vod_jobs: dict[str, dict[str, Any]] = request.app.state.vod_jobs
+
+        raw_filename = file.filename or ""
+        try:
+            ext = validate_video_upload_filename(raw_filename)
+        except ValueError as exc:
+            await file.close()
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        if not (1 <= max_clips <= 20):
+            await file.close()
+            raise HTTPException(status_code=422, detail="max_clips must be between 1 and 20")
+        if not (8 <= min_clip_sec <= 120):
+            await file.close()
+            raise HTTPException(status_code=422, detail="min_clip_sec must be between 8 and 120")
+        if not (15 <= max_clip_sec <= 180) or max_clip_sec < min_clip_sec + 5:
+            await file.close()
+            raise HTTPException(
+                status_code=422,
+                detail="max_clip_sec must be 15-180 and at least min_clip_sec + 5",
+            )
+        if not (10.0 <= viral_threshold <= 100.0):
+            await file.close()
+            raise HTTPException(status_code=422, detail="viral_threshold must be between 10 and 100")
+
+        if channel_id is not None:
+            with session_factory() as session:
+                if session.get(Channel, channel_id) is None:
+                    await file.close()
+                    raise HTTPException(status_code=404, detail="Referenced channel not found")
+
+        job_id = str(uuid4())
+        settings.ensure_data_dirs()
+        upload_dir = safe_resolve_under(settings.buffers_dir, f"upload_{job_id}")
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        dest_path = safe_resolve_under(upload_dir, f"source{ext}")
+
+        total_bytes = 0
+        try:
+            with dest_path.open("wb") as out_fh:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total_bytes += len(chunk)
+                    if total_bytes > settings.max_upload_bytes:
+                        raise HTTPException(
+                            status_code=413,
+                            detail="Uploaded video exceeds maximum allowed size",
+                        )
+                    out_fh.write(chunk)
+        except Exception:
+            shutil.rmtree(upload_dir, ignore_errors=True)
+            raise
+        finally:
+            await file.close()
+
+        if total_bytes == 0:
+            shutil.rmtree(upload_dir, ignore_errors=True)
+            raise HTTPException(status_code=422, detail="Uploaded video file is empty")
+
+        clean_label = sanitize_chat_text(Path(raw_filename).name, max_len=120) or f"upload{ext}"
+        vod_jobs[job_id] = {
+            "job_id": job_id,
+            "status": "started",
+            "source": clean_label,
+            "source_type": "video_upload",
+        }
+
+        _schedule_video_job(
+            request,
+            job_id=job_id,
+            source_label=clean_label,
+            coro_fn=lambda: analyze_local_video(
+                dest_path,
+                clean_label,
+                channel_id=channel_id,
+                source_type="video_upload",
+                source_ref=clean_label,
+                max_clips=max_clips,
+                min_clip_sec=min_clip_sec,
+                max_clip_sec=max_clip_sec,
+                viral_threshold=viral_threshold,
+                use_speech_analysis=use_speech_analysis,
+                settings=settings,
+                session_factory=session_factory,
+                broadcast_fn=broadcast_event,
+                job_id=job_id,
+                cleanup_dir=upload_dir,
+            ),
+        )
+        return {"job_id": job_id, "status": "started", "source_type": "video_upload"}
+
+    @fastapi_app.get("/api/videos/jobs/{job_id}")
+    async def get_video_analysis_job(job_id: str, request: Request) -> dict[str, Any]:
+        vod_jobs: dict[str, dict[str, Any]] = request.app.state.vod_jobs
+        job = vod_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Video analysis job not found")
+        return job
 
     @fastapi_app.get("/api/clips", response_model=list[ClipRead])
     async def list_clips(

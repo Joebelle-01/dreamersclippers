@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 from pydantic import Field as PydanticField
 from sqlmodel import Field, SQLModel
 
@@ -59,7 +59,7 @@ class Channel(SQLModel, table=True):
     display_name: str
     is_monitoring: bool = Field(default=False)
     hype_threshold: float = Field(default=68.0)
-    pre_roll_sec: int = Field(default=25)
+    pre_roll_sec: int = Field(default=60)
     post_roll_sec: int = Field(default=15)
     cooldown_sec: int = Field(default=35)
     weight_chat: float = Field(default=0.50)
@@ -164,8 +164,8 @@ class ChannelCreate(BaseModel):
     channel_login: str
     display_name: str | None = None
     hype_threshold: float = PydanticField(default=68.0, ge=10.0, le=100.0)
-    pre_roll_sec: int = PydanticField(default=25, ge=5, le=120)
-    post_roll_sec: int = PydanticField(default=15, ge=5, le=60)
+    pre_roll_sec: int = PydanticField(default=60, ge=5, le=180)
+    post_roll_sec: int = PydanticField(default=15, ge=5, le=120)
     cooldown_sec: int = PydanticField(default=35, ge=5, le=300)
     weight_chat: float = PydanticField(default=0.50, ge=0.0, le=1.0)
     weight_audio: float = PydanticField(default=0.30, ge=0.0, le=1.0)
@@ -186,8 +186,8 @@ class ChannelUpdate(BaseModel):
 
     display_name: str | None = None
     hype_threshold: float | None = PydanticField(default=None, ge=10.0, le=100.0)
-    pre_roll_sec: int | None = PydanticField(default=None, ge=5, le=120)
-    post_roll_sec: int | None = PydanticField(default=None, ge=5, le=60)
+    pre_roll_sec: int | None = PydanticField(default=None, ge=5, le=180)
+    post_roll_sec: int | None = PydanticField(default=None, ge=5, le=120)
     cooldown_sec: int | None = PydanticField(default=None, ge=5, le=300)
     weight_chat: float | None = PydanticField(default=None, ge=0.0, le=1.0)
     weight_audio: float | None = PydanticField(default=None, ge=0.0, le=1.0)
@@ -457,3 +457,27 @@ class StreamMarkerRequest(BaseModel):
             return None
         cleaned = sanitize_chat_text(value, max_len=140)
         return cleaned or None
+
+
+class ClipNowRequest(BaseModel):
+    """Optional duration override payload when manually triggering Clip Now."""
+
+    duration_sec: int | None = PydanticField(default=None, ge=5, le=180)
+
+
+class VideoAnalyzeUrlRequest(BaseModel):
+    """Request payload to analyze a recorded Twitch VOD or YouTube video for viral clips."""
+
+    video_url: str
+    channel_id: int | None = None
+    max_clips: int = PydanticField(default=5, ge=1, le=20)
+    min_clip_sec: int = PydanticField(default=20, ge=8, le=120)
+    max_clip_sec: int = PydanticField(default=55, ge=15, le=180)
+    viral_threshold: float = PydanticField(default=50.0, ge=10.0, le=100.0)
+    use_speech_analysis: bool = True
+
+    @model_validator(mode="after")
+    def _validate_duration_range(self) -> VideoAnalyzeUrlRequest:
+        if self.max_clip_sec < self.min_clip_sec + 5:
+            raise ValueError("max_clip_sec must be at least 5 seconds greater than min_clip_sec")
+        return self

@@ -80,6 +80,8 @@ def _get_whisper_model(model_size: str) -> Any:
         if cached is not None:
             return cached
 
+        # Silence benign symlink warnings on Windows without Developer Mode
+        os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
         from faster_whisper import WhisperModel
 
         try:
@@ -167,6 +169,7 @@ def _extract_wav_audio(
     trim_start_sec: float,
     trim_end_sec: float,
     ffmpeg_path: str,
+    timeout_sec: int = 120,
 ) -> bool:
     """Extract 16 kHz mono PCM WAV for Whisper; returns False if clip has no audio stream."""
     resolved_ffmpeg = ffmpeg_path or resolve_ffmpeg_path()
@@ -207,7 +210,7 @@ def _extract_wav_audio(
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=120,
+        timeout=max(30, int(timeout_sec)),
         check=False,
     )
     if proc.returncode != 0:
@@ -217,6 +220,132 @@ def _extract_wav_audio(
         raise RuntimeError(f"Failed to extract audio for captions: {err}")
 
     return wav_path.is_file() and wav_path.stat().st_size > 44
+
+
+def _transcribe_wav_words(
+    wav_path: Path,
+    model_size: str,
+    *,
+    offset_sec: float = 0.0,
+) -> tuple[list[CaptionWord], list[dict[str, Any]]]:
+    """Run Whisper over a pre-extracted WAV file and collect words + sentence segments."""
+    model = _get_whisper_model(model_size)
+    raw_segments, _info = model.transcribe(
+        str(wav_path),
+        word_timestamps=True,
+        vad_filter=True,
+    )
+
+    base_offset = max(0.0, float(offset_sec))
+    collected_words: list[CaptionWord] = []
+    speech_segments: list[dict[str, Any]] = []
+
+    for seg in raw_segments:
+        seg_words = getattr(seg, "words", None)
+        seg_word_list: list[CaptionWord] = []
+        if seg_words:
+            for w in seg_words:
+                token = sanitize_ass_text(str(getattr(w, "word", "")))
+                if not token:
+                    continue
+                w_start = base_offset + max(0.0, float(getattr(w, "start", 0.0)))
+                w_end = max(w_start + 0.04, base_offset + float(getattr(w, "end", 0.1)))
+                cw = CaptionWord(start=round(w_start, 3), end=round(w_end, 3), word=token)
+                collected_words.append(cw)
+                seg_word_list.append(cw)
+        else:
+            seg_text_raw = sanitize_ass_text(str(getattr(seg, "text", "")))
+            if not seg_text_raw:
+                continue
+            s_start = base_offset + max(0.0, float(getattr(seg, "start", 0.0)))
+            s_end = max(s_start + 0.1, base_offset + float(getattr(seg, "end", 0.5)))
+            parts = seg_text_raw.split()
+            step = (s_end - s_start) / max(1, len(parts))
+            for idx, part in enumerate(parts):
+                w_start = s_start + idx * step
+                w_end = s_start + (idx + 1) * step
+                cw = CaptionWord(start=round(w_start, 3), end=round(w_end, 3), word=part)
+                collected_words.append(cw)
+                seg_word_list.append(cw)
+
+        if seg_word_list:
+            seg_text = sanitize_ass_text(str(getattr(seg, "text", ""))) or " ".join(
+                cw.word for cw in seg_word_list
+            )
+            seg_start = seg_word_list[0].start
+            seg_end = max(seg_start + 0.08, seg_word_list[-1].end)
+            speech_segments.append(
+                {
+                    "start": round(seg_start, 3),
+                    "end": round(seg_end, 3),
+                    "text": seg_text,
+                    "words": seg_word_list,
+                }
+            )
+
+    return collected_words, speech_segments
+
+
+def transcribe_window_words(
+    video_path: Path,
+    start_sec: float,
+    end_sec: float,
+    ffmpeg_path: str,
+    model_size: str = "base",
+) -> tuple[list[CaptionWord], list[dict[str, Any]]]:
+    """Transcribe a [start_sec, end_sec] window with timestamps anchored to absolute video time."""
+    src_path = Path(video_path)
+    if not src_path.is_file():
+        raise FileNotFoundError(f"Video not found for transcription: {src_path}")
+
+    handle = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    wav_path = Path(handle.name)
+    handle.close()
+
+    try:
+        has_audio = _extract_wav_audio(
+            src_path,
+            wav_path,
+            trim_start_sec=start_sec,
+            trim_end_sec=end_sec,
+            ffmpeg_path=ffmpeg_path,
+            timeout_sec=600,
+        )
+        if not has_audio:
+            return [], []
+        return _transcribe_wav_words(wav_path, model_size, offset_sec=start_sec)
+    finally:
+        try:
+            if wav_path.exists():
+                os.unlink(wav_path)
+        except OSError:
+            pass
+
+
+def slice_captions_for_window(
+    words: list[CaptionWord],
+    clip_start: float,
+    clip_end: float,
+) -> list[CaptionSegment]:
+    """Slice pre-transcribed words for [clip_start, clip_end] into relative caption phrases."""
+    if not words:
+        return []
+    win_start = max(0.0, float(clip_start))
+    win_end = max(win_start + 0.1, float(clip_end))
+    shifted: list[CaptionWord] = []
+    for item in words:
+        if item.end < win_start - 0.05 or item.start > win_end + 0.05:
+            continue
+        rel_start = max(0.0, float(item.start) - win_start)
+        rel_end = max(rel_start + 0.04, float(item.end) - win_start)
+        shifted.append(
+            CaptionWord(
+                start=round(rel_start, 3),
+                end=round(rel_end, 3),
+                word=item.word,
+            )
+        )
+    return _group_words_into_phrases(shifted)
 
 
 def transcribe_clip(
@@ -246,41 +375,7 @@ def transcribe_clip(
         if not has_audio:
             return []
 
-        model = _get_whisper_model(model_size)
-        raw_segments, _info = model.transcribe(
-            str(wav_path),
-            word_timestamps=True,
-            vad_filter=True,
-        )
-
-        collected_words: list[CaptionWord] = []
-        for seg in raw_segments:
-            seg_words = getattr(seg, "words", None)
-            if seg_words:
-                for w in seg_words:
-                    token = sanitize_ass_text(str(getattr(w, "word", "")))
-                    if not token:
-                        continue
-                    w_start = max(0.0, float(getattr(w, "start", 0.0)))
-                    w_end = max(w_start + 0.04, float(getattr(w, "end", w_start + 0.1)))
-                    collected_words.append(CaptionWord(start=w_start, end=w_end, word=token))
-            else:
-                seg_text = sanitize_ass_text(str(getattr(seg, "text", "")))
-                if not seg_text:
-                    continue
-                s_start = max(0.0, float(getattr(seg, "start", 0.0)))
-                s_end = max(s_start + 0.1, float(getattr(seg, "end", s_start + 0.5)))
-                parts = seg_text.split()
-                step = (s_end - s_start) / max(1, len(parts))
-                for idx, part in enumerate(parts):
-                    collected_words.append(
-                        CaptionWord(
-                            start=s_start + idx * step,
-                            end=s_start + (idx + 1) * step,
-                            word=part,
-                        )
-                    )
-
+        collected_words, _segments = _transcribe_wav_words(wav_path, model_size, offset_sec=0.0)
         return _group_words_into_phrases(collected_words)
     finally:
         try:

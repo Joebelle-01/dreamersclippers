@@ -133,7 +133,7 @@ export function TopBar({
             className="btn btn--accent-outline whitespace-nowrap"
           >
             <Video size={16} aria-hidden="true" />
-            <span>Scan Twitch VOD</span>
+            <span>Analyze Video</span>
           </button>
         </div>
       </div>

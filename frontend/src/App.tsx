@@ -21,7 +21,8 @@ import {
   saveTwitchConfig,
   startChannelMonitor,
   startTwitchOAuth,
-  startVodScan,
+  startVideoUploadAnalysis,
+  startVideoUrlAnalysis,
   stopChannelMonitor,
   triggerClipNow,
   updateChannel,
@@ -47,8 +48,9 @@ import type {
   SystemStatus,
   ThumbnailRequest,
   TwitchStatus,
+  VideoAnalyzeUploadParams,
+  VideoAnalyzeUrlRequest,
   VodProgressEvent,
-  VodScanRequest,
 } from './types'
 
 const MAX_TICKS = 60
@@ -325,8 +327,8 @@ export function App() {
     void loadStatus()
   }
 
-  const handleClipNow = async (channelId: number) => {
-    const created = await triggerClipNow(channelId)
+  const handleClipNow = async (channelId: number, durationSec?: number) => {
+    const created = await triggerClipNow(channelId, durationSec)
     setClips((prev) => [created, ...prev.filter((c) => c.id !== created.id)])
     setSelectedClipId(created.id)
     void loadStatus()
@@ -384,14 +386,27 @@ export function App() {
     void loadStatus()
   }
 
-  const handleVodSubmit = async (payload: VodScanRequest) => {
-    const res = await startVodScan(payload)
+  const handleAnalyzeUrl = async (payload: VideoAnalyzeUrlRequest) => {
+    const res = await startVideoUrlAnalysis(payload)
     setActiveVodJob({
       job_id: res.job_id,
-      vod_url: payload.vod_url,
+      vod_url: payload.video_url,
       stage: 'Queued',
-      progress: 0,
-      message: 'Starting Twitch VOD analysis.',
+      progress: 5,
+      message: 'Starting full-video viral analysis.',
+      status: res.status,
+    })
+    return res.job_id
+  }
+
+  const handleAnalyzeUpload = async (params: VideoAnalyzeUploadParams) => {
+    const res = await startVideoUploadAnalysis(params)
+    setActiveVodJob({
+      job_id: res.job_id,
+      vod_url: params.file.name,
+      stage: 'Queued',
+      progress: 5,
+      message: `Analyzing ${params.file.name} for viral moments.`,
       status: res.status,
     })
     return res.job_id
@@ -521,7 +536,8 @@ export function App() {
         channels={channels}
         activeJob={activeVodJob}
         onClose={() => setVodModalOpen(false)}
-        onSubmitScan={handleVodSubmit}
+        onAnalyzeUrl={handleAnalyzeUrl}
+        onAnalyzeUpload={handleAnalyzeUpload}
         onMonitorLiveChannel={handleMonitorLiveChannel}
       />
 
