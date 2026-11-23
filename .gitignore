@@ -1,0 +1,39 @@
+# Secrets & credentials
+.env*
+*.key
+*.pem
+twitch_credentials.json
+
+# Python / Virtualenv / Caches
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+
+# Node / Frontend build
+node_modules/
+frontend/dist/
+
+# Runtime data, media outputs & local databases
+data/
+buffers/
+*.db
+*.db-wal
+*.db-shm
+*.mp4
+*.mkv
+*.mov
+*.srt
+*.ass
+
+# OS & editor artifacts
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
