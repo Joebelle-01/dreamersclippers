@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 import time
@@ -18,11 +19,16 @@ from backend.db import dispose_engines, get_session_factory, init_db
 from backend.main import create_app
 from backend.models import CaptionWord, ChannelCreate, ClipItem, VideoAnalyzeUrlRequest
 from backend.security import (
+    CropBox,
     build_video_folder_slug,
     validate_video_upload_filename,
     validate_video_url,
 )
-from backend.services.caption_service import slice_captions_for_window
+from backend.services.caption_service import (
+    _detect_ingame_subtitle_frame_score,
+    filter_streamer_speech_segments,
+    slice_captions_for_window,
+)
 from backend.services.viral_analyzer import (
     _parse_webvtt_captions,
     _parse_youtube_json3_captions,
@@ -485,6 +491,66 @@ class TestVideoAnalysisApi:
 
         assert list(settings.buffers_dir.glob("upload_*")) == []
 
+    def test_analysis_queue_rejects_work_over_configured_capacity(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        settings = Settings(data_dir=tmp_path / "data", max_pending_analysis_jobs=1)
+
+        async def _slow_analyze_url(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            await asyncio.sleep(0.25)
+            return {"job_id": kwargs["job_id"], "clips_created": []}
+
+        monkeypatch.setattr(backend_main, "analyze_video_url", _slow_analyze_url)
+
+        app = create_app(custom_settings=settings)
+        with TestClient(app) as client:
+            first = client.post(
+                "/api/videos/analyze-url",
+                json={"video_url": "https://youtu.be/dQw4w9WgXcQ"},
+            )
+            assert first.status_code == 200
+
+            second = client.post(
+                "/api/videos/analyze-url",
+                json={"video_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"},
+            )
+            assert second.status_code == 429
+            assert second.json()["detail"] == "Analysis queue is full; try again later"
+
+    def test_analysis_failure_does_not_expose_internal_exception_text(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        settings = Settings(data_dir=tmp_path / "data")
+
+        async def _failing_analyze_url(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            raise RuntimeError("C:\\private\\ffmpeg diagnostic should remain server-side")
+
+        monkeypatch.setattr(backend_main, "analyze_video_url", _failing_analyze_url)
+
+        app = create_app(custom_settings=settings)
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/videos/analyze-url",
+                json={"video_url": "https://youtu.be/dQw4w9WgXcQ"},
+            )
+            assert response.status_code == 200
+            job_id = response.json()["job_id"]
+
+            payload: dict[str, Any] = {}
+            for _ in range(30):
+                payload = client.get(f"/api/videos/jobs/{job_id}").json()
+                if payload["status"] == "failed":
+                    break
+                time.sleep(0.05)
+
+            assert payload["status"] == "failed"
+            assert payload["error"] == "Analysis failed. Check server logs."
+            assert "private" not in payload["error"]
+
 
 class TestExtendedClipDurations:
     """Verify 60s+ default pre-roll, 180s limits, and Clip Now duration overrides."""
@@ -704,4 +770,98 @@ class TestRemoteZeroFullDownloadScan:
             == "yt_q6fgVVmdpgY"
         )
         assert list((settings.clips_dir / "yt_q6fgVVmdpgY").glob("*.mp4"))
+
+
+class TestStreamerVoiceOnlyFilter:
+    """Verify 4-signal Streamer Voice Only CC filter (close-mic, voiceprint, lips, subtitles)."""
+
+    def test_filters_out_npc_with_ingame_subtitles_and_keeps_mic_occluded_streamer(self) -> None:
+        import cv2
+        import numpy as np
+
+        sr = 16000
+        duration_sec = 6.0
+        n_samples = int(sr * duration_sec)
+        t = np.arange(n_samples, dtype=np.float32) / float(sr)
+
+        # Window 1 (0.5s..2.5s): Streamer close-mic voice (loud, dead-center L==R, rich 165Hz)
+        # Window 2 (3.5s..5.5s): Game NPC voice (quieter -13 dB, stereo panned L!=R, 290Hz + SFX)
+        left = np.zeros(n_samples, dtype=np.float32)
+        right = np.zeros(n_samples, dtype=np.float32)
+
+        w1 = (t >= 0.5) & (t <= 2.5)
+        streamer_sig = (
+            0.45 * np.sin(2.0 * np.pi * 165.0 * t[w1])
+            + 0.30 * np.sin(2.0 * np.pi * 330.0 * t[w1])
+            + 0.18 * np.sin(2.0 * np.pi * 990.0 * t[w1])
+        )
+        left[w1] = streamer_sig
+        right[w1] = streamer_sig  # Mono center-locked mic
+
+        w2 = (t >= 3.5) & (t <= 5.5)
+        npc_sig = (
+            0.07 * np.sin(2.0 * np.pi * 290.0 * t[w2])
+            + 0.05 * np.sin(2.0 * np.pi * 1450.0 * t[w2])
+            + 0.06 * np.sin(2.0 * np.pi * 5200.0 * t[w2])
+        )
+        left[w2] = npc_sig * 1.45
+        right[w2] = npc_sig * 0.35  # 3D spatial game panning
+
+        stereo_lr = np.stack([left, right], axis=1)
+        audio_mono = 0.5 * (left + right)
+
+        streamer_words = [
+            CaptionWord(start=0.6, end=1.1, word="Bro"),
+            CaptionWord(start=1.2, end=1.8, word="look"),
+            CaptionWord(start=1.9, end=2.4, word="at"),
+        ]
+        npc_words = [
+            CaptionWord(start=3.6, end=4.2, word="Follow"),
+            CaptionWord(start=4.3, end=4.9, word="me"),
+            CaptionWord(start=5.0, end=5.4, word="inside."),
+        ]
+        speech_segments = [
+            {"start": 0.5, "end": 2.5, "text": "Bro look at", "words": streamer_words},
+            {"start": 3.5, "end": 5.5, "text": "Follow me inside.", "words": npc_words},
+        ]
+
+        # Even when the streamer's lips are hidden behind their boom mic (head_activity = 0),
+        # and an in-game subtitle appears during the NPC line (3.5..5.5s), streamer words are kept
+        # and NPC words are filtered out.
+        n_steps = int(duration_sec * 8)
+        head_activity = np.zeros(n_steps, dtype=np.float32)
+        subtitle_activity = np.zeros(n_steps, dtype=np.float32)
+        subtitle_activity[int(3.5 * 8) : int(5.5 * 8)] = 0.85
+
+        kept = filter_streamer_speech_segments(
+            speech_segments,
+            audio_mono,
+            stereo_lr,
+            head_activity,
+            subtitle_activity,
+            sample_rate=sr,
+            sample_hz=8.0,
+            has_webcam=True,
+            sensitivity=0.50,
+        )
+        assert [w.word for w in kept] == ["Bro", "look", "at"]
+
+        # Verify OpenCV bottom-center in-game subtitle detector
+        plain_frame = np.full((360, 640), 90, dtype=np.uint8)
+        cam_box = CropBox(x=0.0, y=0.0, w=0.24, h=0.28)
+        assert _detect_ingame_subtitle_frame_score(plain_frame, cam_box) < 0.15
+
+        sub_frame = plain_frame.copy()
+        cv2.rectangle(sub_frame, (170, 282), (470, 318), 25, -1)
+        cv2.putText(
+            sub_frame,
+            "Follow me inside, hurry!",
+            (182, 308),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            245,
+            2,
+        )
+        assert _detect_ingame_subtitle_frame_score(sub_frame, cam_box) >= 0.42
+
 

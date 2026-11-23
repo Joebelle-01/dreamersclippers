@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import html
 import inspect
 import json
 import logging
 import re
 import shutil
+import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
@@ -32,12 +34,13 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from sqlmodel import Session, select
 
 from backend.config import Settings, get_settings
 from backend.db import dispose_engines, get_session_factory, init_db
 from backend.models import (
+    CaptionGenerateRequest,
     CaptionSegment,
     Channel,
     ChannelCreate,
@@ -343,6 +346,8 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
 
         ws_clients: set[WebSocket] = set()
         background_tasks: set[asyncio.Task[Any]] = set()
+        analysis_tasks: set[asyncio.Task[Any]] = set()
+        analysis_semaphore = asyncio.Semaphore(active_settings.max_concurrent_analysis_jobs)
         render_inflight: set[str] = set()
         vod_jobs: dict[str, dict[str, Any]] = {}
 
@@ -387,6 +392,8 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         fastapi_app.state.session_factory = session_factory
         fastapi_app.state.ws_clients = ws_clients
         fastapi_app.state.background_tasks = background_tasks
+        fastapi_app.state.analysis_tasks = analysis_tasks
+        fastapi_app.state.analysis_semaphore = analysis_semaphore
         fastapi_app.state.render_inflight = render_inflight
         fastapi_app.state.vod_jobs = vod_jobs
         fastapi_app.state.broadcast_event = broadcast_event
@@ -423,6 +430,28 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     fastapi_app.state.custom_settings = custom_settings
+
+    @fastapi_app.middleware("http")
+    async def require_configured_access_token(request: Request, call_next: Callable[..., Any]) -> Response:
+        """Protect API calls when an operator has configured an access token."""
+        settings = getattr(request.app.state, "settings", initial_settings)
+        token = settings.api_access_token.strip()
+        exempt_path = "/api/twitch/oauth/callback"
+        if (
+            token
+            and request.url.path.startswith("/api/")
+            and request.url.path != exempt_path
+            and request.method != "OPTIONS"
+        ):
+            supplied = request.headers.get("Authorization", "")
+            if request.method == "GET" and request.url.path.startswith("/api/media/"):
+                media_token = request.query_params.get("access_token", "")
+                if media_token:
+                    supplied = f"Bearer {media_token}"
+            expected = f"Bearer {token}"
+            if not hmac.compare_digest(supplied, expected):
+                return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+        return await call_next(request)
 
     fastapi_app.add_middleware(
         CORSMiddleware,
@@ -695,7 +724,6 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         settings = _state_settings(request)
         session_factory = _state_session_factory(request)
         broadcast_event = request.app.state.broadcast_event
-        background_tasks: set[asyncio.Task[Any]] = request.app.state.background_tasks
         vod_jobs: dict[str, dict[str, Any]] = request.app.state.vod_jobs
 
         try:
@@ -712,43 +740,24 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         scan_settings = settings.model_copy(update={"hype_threshold": payload.hype_threshold})
         vod_jobs[job_id] = {"job_id": job_id, "status": "started", "vod_url": safe_url}
 
-        async def _run_vod_scan() -> None:
-            try:
-                sig = inspect.signature(scan_twitch_vod)
-                kwargs: dict[str, Any] = {}
-                if "hype_threshold" in sig.parameters:
-                    kwargs["hype_threshold"] = payload.hype_threshold
-                if "job_id" in sig.parameters:
-                    kwargs["job_id"] = job_id
-                result = await scan_twitch_vod(
-                    safe_url,
-                    payload.channel_id,
-                    payload.max_clips,
-                    scan_settings,
-                    session_factory,
-                    broadcast_event,
-                    **kwargs,
-                )
-                vod_jobs[job_id] = {"job_id": job_id, "status": "completed", "result": result}
-            except asyncio.CancelledError:
-                vod_jobs[job_id] = {"job_id": job_id, "status": "cancelled"}
-                raise
-            except Exception as exc:
-                vod_jobs[job_id] = {"job_id": job_id, "status": "failed", "error": str(exc)}
-                await broadcast_event(
-                    "vod_progress",
-                    {
-                        "job_id": job_id,
-                        "vod_url": safe_url,
-                        "status": "failed",
-                        "progress": 0,
-                        "message": str(exc),
-                    },
-                )
+        async def _run_vod_scan() -> dict[str, Any]:
+            sig = inspect.signature(scan_twitch_vod)
+            kwargs: dict[str, Any] = {}
+            if "hype_threshold" in sig.parameters:
+                kwargs["hype_threshold"] = payload.hype_threshold
+            if "job_id" in sig.parameters:
+                kwargs["job_id"] = job_id
+            return await scan_twitch_vod(
+                safe_url,
+                payload.channel_id,
+                payload.max_clips,
+                scan_settings,
+                session_factory,
+                broadcast_event,
+                **kwargs,
+            )
 
-        task = asyncio.create_task(_run_vod_scan())
-        background_tasks.add(task)
-        task.add_done_callback(background_tasks.discard)
+        _schedule_video_job(request, job_id=job_id, source_label=safe_url, coro_fn=_run_vod_scan)
         return {"job_id": job_id, "status": "started"}
 
     def _schedule_video_job(
@@ -758,29 +767,54 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         source_label: str,
         coro_fn: Callable[[], Any],
     ) -> None:
+        settings = _state_settings(request)
         broadcast_event = request.app.state.broadcast_event
         background_tasks: set[asyncio.Task[Any]] = request.app.state.background_tasks
+        analysis_tasks: set[asyncio.Task[Any]] = request.app.state.analysis_tasks
+        analysis_semaphore: asyncio.Semaphore = request.app.state.analysis_semaphore
         vod_jobs: dict[str, dict[str, Any]] = request.app.state.vod_jobs
+
+        now = time.monotonic()
+        for expired_job_id, existing in list(vod_jobs.items()):
+            finished_at = existing.get("finished_at")
+            if (
+                existing.get("status") in {"completed", "failed", "cancelled"}
+                and isinstance(finished_at, float)
+                and now - finished_at >= settings.analysis_job_retention_sec
+            ):
+                vod_jobs.pop(expired_job_id, None)
+
+        if len(analysis_tasks) >= settings.max_pending_analysis_jobs:
+            raise HTTPException(status_code=429, detail="Analysis queue is full; try again later")
 
         async def _runner() -> None:
             try:
-                result = await coro_fn()
+                async with analysis_semaphore:
+                    vod_jobs[job_id] = {
+                        **vod_jobs.get(job_id, {"job_id": job_id}),
+                        "status": "running",
+                    }
+                    result = await coro_fn()
                 vod_jobs[job_id] = {
                     **vod_jobs.get(job_id, {"job_id": job_id}),
                     "status": "completed",
                     "result": result,
+                    "finished_at": time.monotonic(),
                 }
             except asyncio.CancelledError:
                 vod_jobs[job_id] = {
                     **vod_jobs.get(job_id, {"job_id": job_id}),
                     "status": "cancelled",
+                    "finished_at": time.monotonic(),
                 }
                 raise
-            except Exception as exc:
+            except Exception:
+                logger.exception("Analysis job %s failed for %s", job_id, source_label)
                 vod_jobs[job_id] = {
                     **vod_jobs.get(job_id, {"job_id": job_id}),
                     "status": "failed",
-                    "error": str(exc),
+                    "error": "Analysis failed. Check server logs.",
+                    "finished_at": time.monotonic(),
                 }
                 await broadcast_event(
                     "vod_progress",
@@ -789,13 +823,15 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
                         "vod_url": source_label,
                         "status": "failed",
                         "progress": 0,
-                        "message": str(exc),
+                        "message": "Analysis failed. Check server logs.",
                     },
                 )
 
         task = asyncio.create_task(_runner())
         background_tasks.add(task)
+        analysis_tasks.add(task)
         task.add_done_callback(background_tasks.discard)
+        task.add_done_callback(analysis_tasks.discard)
 
     @fastapi_app.post("/api/videos/analyze-url")
     async def analyze_video_by_url(
@@ -960,7 +996,7 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         job = vod_jobs.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Video analysis job not found")
-        return job
+        return {key: value for key, value in job.items() if key != "finished_at"}
 
     @fastapi_app.get("/api/clips", response_model=list[ClipRead])
     async def list_clips(
@@ -1211,7 +1247,11 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
             return ChannelRead.from_orm_row(channel)
 
     @fastapi_app.post("/api/clips/{clip_id}/captions/generate", response_model=ClipRead)
-    async def generate_clip_captions(clip_id: str, request: Request) -> ClipRead:
+    async def generate_clip_captions(
+        clip_id: str,
+        request: Request,
+        payload: CaptionGenerateRequest | None = None,
+    ) -> ClipRead:
         settings = _state_settings(request)
         session_factory = _state_session_factory(request)
 
@@ -1226,6 +1266,8 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
                 if clip.trim_end_sec > clip.trim_start_sec
                 else float(clip.duration_sec)
             )
+            layout_mode = str(clip.layout_mode)
+            webcam_box_raw = clip.webcam_box_json
 
         try:
             raw_path = safe_resolve_under(settings.clips_dir, raw_video_path)
@@ -1235,7 +1277,24 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         if not raw_path.is_file():
             raise HTTPException(status_code=404, detail="Raw clip video file not found")
 
+        webcam_box: CropBox | None = None
+        if layout_mode == "split_top_cam" and webcam_box_raw:
+            with suppress(ValueError, TypeError, json.JSONDecodeError):
+                webcam_box = validate_crop_box(json.loads(webcam_box_raw))
+
+        streamer_only = payload.streamer_only if payload is not None else True
+        sensitivity = payload.sensitivity if payload is not None else 0.50
+
         try:
+            sig = inspect.signature(transcribe_clip)
+            extra_kwargs: dict[str, Any] = {}
+            if "webcam_box" in sig.parameters:
+                extra_kwargs["webcam_box"] = webcam_box
+            if "streamer_only" in sig.parameters:
+                extra_kwargs["streamer_only"] = streamer_only
+            if "sensitivity" in sig.parameters:
+                extra_kwargs["sensitivity"] = sensitivity
+
             segments = await asyncio.to_thread(
                 transcribe_clip,
                 raw_path,
@@ -1243,6 +1302,7 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
                 trim_end,
                 settings.ffmpeg_path,
                 settings.whisper_model,
+                **extra_kwargs,
             )
         except Exception as exc:
             logger.exception("Caption generation failed for clip %s", clip_id)
@@ -1982,6 +2042,17 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
 
     @fastapi_app.websocket("/ws/live")
     async def websocket_live(websocket: WebSocket) -> None:
+        settings: Settings = websocket.app.state.settings
+        configured_token = settings.api_access_token.strip()
+        if configured_token:
+            origin = websocket.headers.get("origin")
+            supplied_token = websocket.query_params.get("access_token", "")
+            if (
+                (origin is not None and origin not in settings.cors_origins)
+                or not hmac.compare_digest(supplied_token, configured_token)
+            ):
+                await websocket.close(code=1008)
+                return
         await websocket.accept()
         ws_clients: set[WebSocket] = websocket.app.state.ws_clients
         live_manager: LiveManager = websocket.app.state.live_manager

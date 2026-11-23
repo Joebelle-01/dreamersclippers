@@ -12,10 +12,12 @@ import wave
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 
 from backend.config import resolve_ffmpeg_path
 from backend.models import CaptionSegment, CaptionWord
+from backend.security import CropBox
 
 logger = logging.getLogger(__name__)
 
@@ -193,8 +195,9 @@ def _extract_wav_audio(
     trim_end_sec: float,
     ffmpeg_path: str,
     timeout_sec: int = 120,
+    channels: int = 1,
 ) -> bool:
-    """Extract 16 kHz mono PCM WAV for Whisper; returns False if clip has no audio stream."""
+    """Extract 16 kHz PCM WAV for Whisper; returns False if clip has no audio stream."""
     resolved_ffmpeg = ffmpeg_path or resolve_ffmpeg_path()
     if not resolved_ffmpeg:
         raise RuntimeError("ffmpeg executable path could not be resolved")
@@ -217,7 +220,7 @@ def _extract_wav_audio(
         [
             "-vn",
             "-ac",
-            "1",
+            str(max(1, min(2, int(channels)))),
             "-ar",
             "16000",
             "-c:a",
@@ -245,21 +248,34 @@ def _extract_wav_audio(
     return wav_path.is_file() and wav_path.stat().st_size > 44
 
 
+def _load_wav_channels_float32(wav_path: Path) -> tuple[np.ndarray, np.ndarray | None]:
+    """Load a 16 kHz s16le WAV file into (mono_1d_float32, optional_stereo_2d_float32)."""
+    with wave.open(str(wav_path), "rb") as wf:
+        n_channels = wf.getnchannels()
+        frame_count = wf.getnframes()
+        if frame_count <= 0:
+            return np.zeros(0, dtype=np.float32), None
+        pcm_bytes = wf.readframes(frame_count)
+    if not pcm_bytes:
+        return np.zeros(0, dtype=np.float32), None
+    raw = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+    if n_channels >= 2:
+        usable = (raw.size // n_channels) * n_channels
+        reshaped = raw[:usable].reshape(-1, n_channels)[:, :2]
+        mono = np.mean(reshaped, axis=1).astype(np.float32)
+        return mono, reshaped
+    return raw, None
+
+
 def _load_wav_float32(wav_path: Path) -> np.ndarray:
-    """Load a 16 kHz mono s16le WAV file into a 1D float32 array in [-1.0, 1.0].
+    """Load a 16 kHz mono/stereo s16le WAV file into a 1D float32 array in [-1.0, 1.0].
 
     Passing a float32 NumPy array directly to faster-whisper's WhisperModel.transcribe()
     bypasses faster_whisper.audio.decode_audio(), which calls av.open(..., metadata_errors="ignore")
     and fails on PyAV 19+ where metadata_errors was removed.
     """
-    with wave.open(str(wav_path), "rb") as wf:
-        frame_count = wf.getnframes()
-        if frame_count <= 0:
-            return np.zeros(0, dtype=np.float32)
-        pcm_bytes = wf.readframes(frame_count)
-    if not pcm_bytes:
-        return np.zeros(0, dtype=np.float32)
-    return np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+    mono, _stereo = _load_wav_channels_float32(wav_path)
+    return mono
 
 
 def _transcribe_wav_words(
@@ -410,12 +426,375 @@ def slice_captions_for_window(
     return _group_words_into_phrases(shifted)
 
 
+def _compute_acoustic_segment_features(
+    audio_mono: np.ndarray,
+    stereo_lr: np.ndarray | None,
+    sample_rate: int,
+    start_sec: float,
+    end_sec: float,
+) -> dict[str, Any]:
+    """Compute near-field close-mic acoustic features and a 16-D speaker voiceprint vector."""
+    n_total = int(audio_mono.size)
+    if n_total == 0:
+        return {
+            "vocal_rms": 0.0,
+            "proximity_ratio": 0.0,
+            "dry_presence_ratio": 0.0,
+            "center_lock_score": 0.5,
+            "voiceprint": np.zeros(16, dtype=np.float32),
+        }
+
+    i0 = max(0, min(n_total - 1, int(round(start_sec * sample_rate))))
+    i1 = max(i0 + 1, min(n_total, int(round(end_sec * sample_rate))))
+    seg_mono = audio_mono[i0:i1]
+    if seg_mono.size < 256:
+        seg_mono = np.pad(seg_mono, (0, 256 - seg_mono.size))
+
+    # Stereo Mid/Side center-channel lock (streamer mics are mono/center-panned: L == R)
+    center_lock_score = 0.85
+    if stereo_lr is not None and stereo_lr.shape[0] >= i1 and stereo_lr.shape[1] >= 2:
+        seg_lr = stereo_lr[i0:i1, :2]
+        mid = 0.5 * (seg_lr[:, 0] + seg_lr[:, 1])
+        side = 0.5 * (seg_lr[:, 0] - seg_lr[:, 1])
+        mid_rms = float(np.sqrt(np.mean(np.square(mid)) + 1e-12))
+        side_rms = float(np.sqrt(np.mean(np.square(side)) + 1e-12))
+        side_ratio = side_rms / (mid_rms + 1e-7)
+        center_lock_score = float(np.clip(1.0 - 1.75 * side_ratio, 0.0, 1.0))
+
+    # Short-time FFT over 1024-sample (64 ms) Hann frames
+    n_fft = 1024
+    hop = 512
+    if seg_mono.size < n_fft:
+        padded = np.pad(seg_mono, (0, n_fft - seg_mono.size))
+        frames = padded[np.newaxis, :]
+    else:
+        n_frames = 1 + (seg_mono.size - n_fft) // hop
+        strides = (seg_mono.strides[0] * hop, seg_mono.strides[0])
+        frames = np.lib.stride_tricks.as_strided(
+            seg_mono,
+            shape=(max(1, n_frames), n_fft),
+            strides=strides,
+        ).copy()
+
+    window = np.hanning(n_fft).astype(np.float32)
+    spec = np.abs(np.fft.rfft(frames * window[np.newaxis, :], axis=1)) ** 2
+    freqs = np.fft.rfftfreq(n_fft, d=1.0 / float(sample_rate))
+
+    mean_power = np.mean(spec, axis=0) + 1e-12
+    total_energy = float(np.sum(mean_power))
+
+    # Near-field close-mic bands: proximity chest warmth (110-280 Hz) + dry vocal presence (110-3400 Hz)
+    vocal_mask = (freqs >= 110.0) & (freqs <= 3400.0)
+    prox_mask = (freqs >= 110.0) & (freqs <= 285.0)
+    vocal_energy = float(np.sum(mean_power[vocal_mask]))
+    prox_energy = float(np.sum(mean_power[prox_mask]))
+
+    frame_vocal_rms = np.sqrt(np.mean(spec[:, vocal_mask], axis=1) + 1e-12)
+    # 80th percentile frame vocal RMS captures active syllables even across brief pauses
+    vocal_rms = float(np.percentile(frame_vocal_rms, 80)) if frame_vocal_rms.size > 0 else 0.0
+    proximity_ratio = float(np.clip(prox_energy / (vocal_energy + 1e-9), 0.0, 1.0))
+    dry_presence_ratio = float(np.clip(vocal_energy / (total_energy + 1e-9), 0.0, 1.0))
+
+    # 13 log-spaced vocal filterbank bands (110..3600 Hz) + spectral centroid + rolloff + pitch F0
+    band_edges = np.geomspace(110.0, 3600.0, 14)
+    band_vec = np.zeros(13, dtype=np.float32)
+    for b_idx in range(13):
+        b_mask = (freqs >= band_edges[b_idx]) & (freqs < band_edges[b_idx + 1])
+        band_vec[b_idx] = float(np.log10(np.mean(mean_power[b_mask]) + 1e-10))
+    band_vec -= float(np.mean(band_vec))
+    band_norm = float(np.linalg.norm(band_vec))
+    if band_norm > 1e-6:
+        band_vec /= band_norm
+
+    vocal_freqs = freqs[vocal_mask]
+    vocal_pow = mean_power[vocal_mask]
+    centroid_hz = float(np.sum(vocal_freqs * vocal_pow) / (np.sum(vocal_pow) + 1e-9))
+    centroid_norm = float(np.clip((centroid_hz - 200.0) / 2400.0, 0.0, 1.0))
+
+    cumsum_pow = np.cumsum(vocal_pow)
+    rolloff_idx = int(np.searchsorted(cumsum_pow, 0.85 * cumsum_pow[-1]))
+    rolloff_hz = float(vocal_freqs[min(rolloff_idx, vocal_freqs.size - 1)])
+    rolloff_norm = float(np.clip((rolloff_hz - 400.0) / 3000.0, 0.0, 1.0))
+
+    # Pitch F0 estimate via harmonic peak in 85..340 Hz
+    f0_mask = (freqs >= 85.0) & (freqs <= 340.0)
+    f0_freqs = freqs[f0_mask]
+    f0_pow = mean_power[f0_mask]
+    f0_hz = float(f0_freqs[int(np.argmax(f0_pow))]) if f0_pow.size > 0 else 150.0
+    f0_norm = float(np.clip((f0_hz - 85.0) / 255.0, 0.0, 1.0))
+
+    voiceprint = np.concatenate(
+        [
+            band_vec * 0.80,
+            np.array([centroid_norm * 0.45, rolloff_norm * 0.35, f0_norm * 0.55], dtype=np.float32),
+        ]
+    )
+    vp_norm = float(np.linalg.norm(voiceprint))
+    if vp_norm > 1e-6:
+        voiceprint /= vp_norm
+
+    return {
+        "vocal_rms": vocal_rms,
+        "proximity_ratio": proximity_ratio,
+        "dry_presence_ratio": dry_presence_ratio,
+        "center_lock_score": center_lock_score,
+        "voiceprint": voiceprint,
+    }
+
+
+def _detect_ingame_subtitle_frame_score(
+    gray_frame: np.ndarray,
+    webcam_box: CropBox | None,
+) -> float:
+    """Measure bottom-center 16:9 in-game subtitle glyph density in [0.0, 1.0]."""
+    h, w = gray_frame.shape[:2]
+    if h < 90 or w < 160:
+        return 0.0
+
+    # Bottom-center gameplay subtitle strip: x in [0.22..0.78], y in [0.75..0.93]
+    x0, x1 = int(round(0.22 * w)), int(round(0.78 * w))
+    y0, y1 = int(round(0.75 * h)), int(round(0.93 * h))
+
+    # Avoid any overlap if the streamer's webcam is positioned at the bottom
+    if webcam_box is not None and (webcam_box.y + webcam_box.h) > 0.72:
+        wx0 = int(round(webcam_box.x * w))
+        wx1 = int(round((webcam_box.x + webcam_box.w) * w))
+        if wx1 <= int(0.5 * w):
+            x0 = max(x0, wx1 + 8)
+        elif wx0 >= int(0.5 * w):
+            x1 = min(x1, wx0 - 8)
+
+    if x1 - x0 < 40 or y1 - y0 < 16:
+        return 0.0
+
+    strip = gray_frame[y0:y1, x0:x1]
+    # Game subtitles consist of bright glyph strokes (>= 205) outlined by dark pixels (<= 65)
+    bright_mask = strip >= 205
+    bright_ratio = float(np.mean(bright_mask))
+    if bright_ratio < 0.004 or bright_ratio > 0.22:
+        return 0.0
+
+    kernel = np.ones((3, 5), dtype=np.uint8)
+    dark_neighbor = cv2.erode(strip, kernel) <= 65
+    outlined_glyphs = bright_mask & dark_neighbor
+    glyph_ratio = float(np.mean(outlined_glyphs))
+
+    gx = np.abs(cv2.Sobel(strip, cv2.CV_32F, 1, 0, ksize=3))
+    gy = np.abs(cv2.Sobel(strip, cv2.CV_32F, 0, 1, ksize=3))
+    horiz_stroke_contrast = float(np.mean(np.maximum(0.0, gx - 0.55 * gy))) / 255.0
+
+    raw_score = (glyph_ratio * 24.0) + (horiz_stroke_contrast * 1.8)
+    return float(np.clip(raw_score, 0.0, 1.0))
+
+
+def _compute_webcam_and_subtitle_activity(
+    video_path: Path,
+    trim_start_sec: float,
+    trim_end_sec: float,
+    webcam_box: CropBox | None,
+    *,
+    sample_hz: float = 8.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Sample upper-face/head speaking motion in webcam_box and in-game subtitle presence."""
+    duration = max(0.2, float(trim_end_sec) - max(0.0, float(trim_start_sec)))
+    n_steps = max(2, min(720, int(round(duration * sample_hz))))
+    head_activity = np.zeros(n_steps, dtype=np.float32)
+    subtitle_activity = np.zeros(n_steps, dtype=np.float32)
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        cap.release()
+        return head_activity, subtitle_activity
+
+    try:
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
+        if not np.isfinite(fps) or fps <= 1.0:
+            fps = 30.0
+
+        prev_cam_patch: np.ndarray | None = None
+        start_base = max(0.0, float(trim_start_sec))
+        for step_idx in range(n_steps):
+            t_sec = start_base + (step_idx + 0.5) / sample_hz
+            frame_no = max(0, int(round(t_sec * fps)))
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_no)
+            ok, frame = cap.read()
+            if not ok or frame is None or frame.size == 0:
+                continue
+
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            subtitle_activity[step_idx] = _detect_ingame_subtitle_frame_score(gray, webcam_box)
+
+            if webcam_box is not None:
+                fh, fw = gray.shape[:2]
+                cx0 = max(0, min(fw - 8, int(round(webcam_box.x * fw))))
+                cy0 = max(0, min(fh - 8, int(round(webcam_box.y * fh))))
+                cx1 = max(cx0 + 8, min(fw, int(round((webcam_box.x + webcam_box.w) * fw))))
+                cy1 = max(cy0 + 8, min(fh, int(round((webcam_box.y + webcam_box.h) * fh))))
+                cam_crop = gray[cy0:cy1, cx0:cx1]
+                ch, cw = cam_crop.shape[:2]
+                if ch >= 12 and cw >= 12:
+                    # Focus on upper/mid face, cheeks, brow & head (y: 12%..78%) so a boom mic
+                    # blocking the lower lips never blocks head/cheek speaking cadence.
+                    ry0, ry1 = int(round(0.12 * ch)), int(round(0.78 * ch))
+                    rx0, rx1 = int(round(0.15 * cw)), int(round(0.85 * cw))
+                    roi = cv2.resize(
+                        cam_crop[max(0, ry0) : max(ry0 + 4, ry1), max(0, rx0) : max(rx0 + 4, rx1)],
+                        (48, 48),
+                    ).astype(np.float32)
+                    if prev_cam_patch is not None:
+                        diff = float(np.mean(np.abs(roi - prev_cam_patch)))
+                        head_activity[step_idx] = diff
+                    prev_cam_patch = roi
+    finally:
+        cap.release()
+
+    if head_activity.size > 1 and float(np.max(head_activity)) > 1e-4:
+        p90 = float(np.percentile(head_activity, 90))
+        scale = max(2.5, p90)
+        head_activity = np.clip(head_activity / scale, 0.0, 1.0)
+
+    return head_activity, subtitle_activity
+
+
+def filter_streamer_speech_segments(
+    speech_segments: list[dict[str, Any]],
+    audio_mono: np.ndarray,
+    stereo_lr: np.ndarray | None = None,
+    head_activity: np.ndarray | None = None,
+    ingame_subtitle_activity: np.ndarray | None = None,
+    *,
+    sample_rate: int = 16000,
+    sample_hz: float = 8.0,
+    has_webcam: bool = False,
+    sensitivity: float = 0.50,
+) -> list[CaptionWord]:
+    """Filter transcribed speech segments to keep only the streamer's voice, rejecting game NPCs."""
+    if not speech_segments:
+        return []
+
+    evaluated: list[dict[str, Any]] = []
+    for seg in speech_segments:
+        s_start = max(0.0, float(seg.get("start", 0.0)))
+        s_end = max(s_start + 0.08, float(seg.get("end", s_start + 0.25)))
+        words = list(seg.get("words") or [])
+        if not words:
+            continue
+
+        ac = _compute_acoustic_segment_features(
+            audio_mono,
+            stereo_lr,
+            sample_rate,
+            s_start,
+            s_end,
+        )
+
+        idx0 = max(0, int(np.floor(s_start * sample_hz)))
+        idx1 = max(idx0 + 1, int(np.ceil(s_end * sample_hz)))
+
+        head_val = 0.0
+        if head_activity is not None and head_activity.size > 0:
+            sl = head_activity[min(idx0, head_activity.size - 1) : min(idx1, head_activity.size)]
+            if sl.size > 0:
+                head_val = float(np.mean(sl))
+
+        sub_val = 0.0
+        if ingame_subtitle_activity is not None and ingame_subtitle_activity.size > 0:
+            sl_sub = ingame_subtitle_activity[
+                min(idx0, ingame_subtitle_activity.size - 1) : min(
+                    idx1, ingame_subtitle_activity.size
+                )
+            ]
+            if sl_sub.size > 0:
+                sub_val = float(np.mean(sl_sub))
+
+        evaluated.append(
+            {
+                "start": s_start,
+                "end": s_end,
+                "words": words,
+                "vocal_rms": ac["vocal_rms"],
+                "proximity_ratio": ac["proximity_ratio"],
+                "dry_presence_ratio": ac["dry_presence_ratio"],
+                "center_lock_score": ac["center_lock_score"],
+                "voiceprint": ac["voiceprint"],
+                "head_motion": head_val,
+                "subtitle_presence": sub_val,
+            }
+        )
+
+    if not evaluated:
+        return []
+
+    # Reference vocal RMS (85th percentile across speech bursts)
+    rms_values = np.array([item["vocal_rms"] for item in evaluated], dtype=np.float32)
+    ref_rms = max(1e-7, float(np.percentile(rms_values, 85)))
+
+    for item in evaluated:
+        ratio = item["vocal_rms"] / ref_rms
+        # Convert relative dB (-16 dB .. 0 dB) into [0.0 .. 1.0]
+        db_rel = 20.0 * float(np.log10(max(1e-5, ratio)))
+        item["rel_vocal_level"] = float(np.clip((db_rel + 15.0) / 15.0, 0.0, 1.0))
+        item["anchor_rank"] = (
+            0.48 * item["rel_vocal_level"]
+            + 0.24 * item["center_lock_score"]
+            + 0.16 * item["dry_presence_ratio"]
+            + (0.12 * item["head_motion"] if has_webcam else 0.0)
+            - 0.25 * item["subtitle_presence"]
+        )
+
+    # Enroll Streamer Reference Voiceprint from the strongest close-mic anchor segment(s)
+    sorted_anchors = sorted(evaluated, key=lambda x: x["anchor_rank"], reverse=True)
+    top_k = max(1, min(3, (len(sorted_anchors) + 1) // 2))
+    centroid = np.mean(
+        np.stack([item["voiceprint"] for item in sorted_anchors[:top_k]], axis=0),
+        axis=0,
+    )
+    c_norm = float(np.linalg.norm(centroid))
+    if c_norm > 1e-6:
+        centroid /= c_norm
+
+    threshold = float(np.clip(sensitivity, 0.25, 0.78))
+    kept_words: list[CaptionWord] = []
+
+    for item in evaluated:
+        vp_sim = float(np.clip(np.dot(item["voiceprint"], centroid), 0.0, 1.0))
+        close_mic_score = (
+            0.50 * item["rel_vocal_level"]
+            + 0.28 * item["center_lock_score"]
+            + 0.22 * item["dry_presence_ratio"]
+        )
+        # Positive-only webcam head/cheek motion bonus (never penalizes mic-occluded lips)
+        head_boost = (0.12 * item["head_motion"]) if has_webcam else 0.0
+
+        # Penalize segments where an in-game subtitle banner is active at the bottom of the screen
+        # and the streamer is not loudly talking over it into their close-mic
+        subtitle_penalty = 0.0
+        if item["subtitle_presence"] >= 0.42 and item["rel_vocal_level"] < 0.78:
+            subtitle_penalty = 0.28 * item["subtitle_presence"]
+
+        streamer_score = (
+            0.54 * close_mic_score
+            + 0.36 * vp_sim
+            + head_boost
+            - subtitle_penalty
+        )
+        item["streamer_score"] = streamer_score
+        if streamer_score >= threshold:
+            kept_words.extend(item["words"])
+
+    return kept_words
+
+
 def transcribe_clip(
     video_path: Path,
     trim_start_sec: float,
     trim_end_sec: float,
     ffmpeg_path: str,
     model_size: str = "base",
+    *,
+    webcam_box: CropBox | None = None,
+    streamer_only: bool = False,
+    sensitivity: float = 0.50,
 ) -> list[CaptionSegment]:
     """Transcribe trimmed clip audio locally using faster-whisper into short-form phrases."""
     src_path = Path(video_path)
@@ -433,11 +812,38 @@ def transcribe_clip(
             trim_start_sec=trim_start_sec,
             trim_end_sec=trim_end_sec,
             ffmpeg_path=ffmpeg_path,
+            channels=2 if streamer_only else 1,
         )
         if not has_audio:
             return []
 
-        collected_words, _segments = _transcribe_wav_words(wav_path, model_size, offset_sec=0.0)
+        collected_words, speech_segments = _transcribe_wav_words(
+            wav_path,
+            model_size,
+            offset_sec=0.0,
+        )
+        if streamer_only and speech_segments:
+            audio_mono, stereo_lr = _load_wav_channels_float32(wav_path)
+            head_act, sub_act = _compute_webcam_and_subtitle_activity(
+                src_path,
+                trim_start_sec,
+                trim_end_sec,
+                webcam_box,
+                sample_hz=8.0,
+            )
+            filtered_words = filter_streamer_speech_segments(
+                speech_segments,
+                audio_mono,
+                stereo_lr,
+                head_act,
+                sub_act,
+                sample_rate=16000,
+                sample_hz=8.0,
+                has_webcam=webcam_box is not None,
+                sensitivity=sensitivity,
+            )
+            return _group_words_into_phrases(filtered_words)
+
         return _group_words_into_phrases(collected_words)
     finally:
         try:

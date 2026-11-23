@@ -158,6 +158,13 @@ class ThumbnailRequest(BaseModel):
     title_text: str | None = None
 
 
+class CaptionGenerateRequest(BaseModel):
+    """Request payload for closed-caption generation with optional streamer-only voice filtering."""
+
+    streamer_only: bool = True
+    sensitivity: float = PydanticField(default=0.50, ge=0.15, le=0.85)
+
+
 class ChannelCreate(BaseModel):
     """Payload to create a Twitch channel monitor configuration."""
 

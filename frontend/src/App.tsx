@@ -402,8 +402,11 @@ export function App() {
     void loadStatus()
   }
 
-  const handleGenerateCaptions = async (clipId: string) => {
-    const updated = await generateClipCaptions(clipId)
+  const handleGenerateCaptions = async (
+    clipId: string,
+    options?: { streamer_only?: boolean },
+  ) => {
+    const updated = await generateClipCaptions(clipId, options)
     setClips((prev) => prev.map((c) => (c.id === clipId ? updated : c)))
     return updated
   }

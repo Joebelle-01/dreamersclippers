@@ -55,7 +55,10 @@ interface ReviewWorkbenchProps {
   onDetectWebcam: (clipId: string) => Promise<ClipItem>
   onSavePreset: (clipId: string) => Promise<void>
   onRenderClip: (clipId: string) => Promise<void>
-  onGenerateCaptions: (clipId: string) => Promise<ClipItem>
+  onGenerateCaptions: (
+    clipId: string,
+    options?: { streamer_only?: boolean },
+  ) => Promise<ClipItem>
   onGenerateThumbnail: (clipId: string, payload: ThumbnailRequest) => Promise<ClipItem>
   onDeleteClip: (clipId: string) => Promise<void>
   onOpenVodModal: () => void
@@ -151,6 +154,7 @@ export function ReviewWorkbench({
   const [trimEnd, setTrimEnd] = useState<number>(10)
   const [normalizeAudio, setNormalizeAudio] = useState<boolean>(true)
   const [captionsEnabled, setCaptionsEnabled] = useState<boolean>(true)
+  const [streamerVoiceOnly, setStreamerVoiceOnly] = useState<boolean>(true)
   const [captionStyle, setCaptionStyle] = useState<CaptionStyle>('bold_pop')
   const [captionPosition, setCaptionPosition] = useState<CaptionPosition>('seam')
   const [captionsDraft, setCaptionsDraft] = useState<CaptionSegment[]>([])
@@ -639,7 +643,9 @@ export function ReviewWorkbench({
     setCaptionsBusy(true)
     setActionFeedback(null)
     try {
-      const updated = await onGenerateCaptions(selectedClip.id)
+      const updated = await onGenerateCaptions(selectedClip.id, {
+        streamer_only: streamerVoiceOnly,
+      })
       const parsed = parseCaptions(updated)
       setCaptionsDraft(parsed)
       setCaptionsEnabled(updated.captions_enabled ?? true)
@@ -649,8 +655,12 @@ export function ReviewWorkbench({
         kind: 'success',
         text:
           parsed.length > 0
-            ? `Generated ${parsed.length} caption lines.`
-            : 'No spoken speech detected in this clip.',
+            ? streamerVoiceOnly
+              ? `Generated ${parsed.length} streamer-only caption lines (game NPC dialogue filtered).`
+              : `Generated ${parsed.length} caption lines.`
+            : streamerVoiceOnly
+              ? 'No streamer speech detected (only gameplay/NPC audio found).'
+              : 'No spoken speech detected in this clip.',
       })
     } catch (err) {
       setActionFeedback({
@@ -1401,6 +1411,18 @@ export function ReviewWorkbench({
                           </button>
                         </div>
                       )}
+
+                      <label className="w-full flex items-center justify-between gap-2 py-1 cursor-pointer">
+                        <span className="text-xs text-ink-2">
+                          Streamer Voice Only (filter game NPCs &amp; in-game subtitles)
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={streamerVoiceOnly}
+                          onChange={(e) => setStreamerVoiceOnly(e.target.checked)}
+                          className="w-4 h-4 accent-accent"
+                        />
+                      </label>
 
                       <div className="flex items-center gap-2">
                         <button

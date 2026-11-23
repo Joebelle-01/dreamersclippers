@@ -35,6 +35,22 @@ export class ApiError extends Error {
   }
 }
 
+const API_ACCESS_TOKEN = import.meta.env.VITE_STREAMCLIPPERS_API_TOKEN?.trim() ?? ''
+
+function authorizedHeaders(headers?: HeadersInit): Headers {
+  const result = new Headers(headers)
+  if (API_ACCESS_TOKEN) {
+    result.set('Authorization', `Bearer ${API_ACCESS_TOKEN}`)
+  }
+  return result
+}
+
+function authorizedMediaUrl(path: string): string {
+  if (!API_ACCESS_TOKEN) return path
+  const separator = path.includes('?') ? '&' : '?'
+  return `${path}${separator}access_token=${encodeURIComponent(API_ACCESS_TOKEN)}`
+}
+
 function extractErrorMessage(body: unknown, fallback: string): string {
   if (typeof body === 'object' && body !== null && 'detail' in body) {
     const detail = (body as { detail: unknown }).detail
@@ -56,7 +72,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: {
       'Content-Type': 'application/json',
-      ...(init?.headers ?? {}),
+      ...Object.fromEntries(authorizedHeaders(init?.headers).entries()),
     },
   })
   if (!res.ok) {
@@ -471,6 +487,7 @@ export async function startVideoUploadAnalysis(
   const res = await fetch('/api/videos/analyze-upload', {
     method: 'POST',
     body: form,
+    headers: authorizedHeaders(),
   })
   if (!res.ok) {
     let parsed: unknown = null
@@ -527,9 +544,16 @@ export function renderClipExport(clipId: string): Promise<ClipItem | { status: s
   })
 }
 
-export function generateClipCaptions(clipId: string): Promise<ClipItem> {
+export function generateClipCaptions(
+  clipId: string,
+  options?: { streamer_only?: boolean; sensitivity?: number },
+): Promise<ClipItem> {
   return requestJson<ClipItem>(`/api/clips/${clipId}/captions/generate`, {
     method: 'POST',
+    body: JSON.stringify({
+      streamer_only: options?.streamer_only ?? true,
+      sensitivity: options?.sensitivity ?? 0.5,
+    }),
   })
 }
 
@@ -626,24 +650,25 @@ export function createChannelMarker(
 }
 
 export function rawVideoUrl(clipId: string): string {
-  return `/api/media/raw/${encodeURIComponent(clipId)}`
+  return authorizedMediaUrl(`/api/media/raw/${encodeURIComponent(clipId)}`)
 }
 
 export function exportVideoUrl(clipId: string): string {
-  return `/api/media/export/${encodeURIComponent(clipId)}`
+  return authorizedMediaUrl(`/api/media/export/${encodeURIComponent(clipId)}`)
 }
 
 export function thumbImageUrl(clipId: string): string {
-  return `/api/media/thumb/${encodeURIComponent(clipId)}`
+  return authorizedMediaUrl(`/api/media/thumb/${encodeURIComponent(clipId)}`)
 }
 
 export function exportThumbUrl(clipId: string, cacheBust?: string | number | null): string {
   const base = `/api/media/export-thumb/${encodeURIComponent(clipId)}`
-  return cacheBust != null ? `${base}?v=${encodeURIComponent(String(cacheBust))}` : base
+  const versioned = cacheBust != null ? `${base}?v=${encodeURIComponent(String(cacheBust))}` : base
+  return authorizedMediaUrl(versioned)
 }
 
 export function exportSrtUrl(clipId: string): string {
-  return `/api/media/srt/${encodeURIComponent(clipId)}`
+  return authorizedMediaUrl(`/api/media/srt/${encodeURIComponent(clipId)}`)
 }
 
 function isLiveEvent(value: unknown): value is LiveSocketEvent {
@@ -672,9 +697,12 @@ export function connectLiveSocket(
     if (closed) return
     onConnectionChange('connecting')
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${protocol}//${window.location.host}/ws/live`
+    const endpoint = new URL(`${protocol}//${window.location.host}/ws/live`)
+    if (API_ACCESS_TOKEN) {
+      endpoint.searchParams.set('access_token', API_ACCESS_TOKEN)
+    }
     try {
-      socket = new WebSocket(wsUrl)
+      socket = new WebSocket(endpoint)
     } catch {
       onConnectionChange('offline')
       scheduleReconnect()
