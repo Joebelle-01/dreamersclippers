@@ -14,11 +14,19 @@ from fastapi.testclient import TestClient
 import backend.main as backend_main
 import backend.services.viral_analyzer as viral_analyzer
 from backend.config import Settings, resolve_ffmpeg_path
+from backend.db import dispose_engines, get_session_factory, init_db
 from backend.main import create_app
 from backend.models import CaptionWord, ChannelCreate, ClipItem, VideoAnalyzeUrlRequest
 from backend.security import validate_video_upload_filename, validate_video_url
 from backend.services.caption_service import slice_captions_for_window
-from backend.services.viral_analyzer import build_viral_title, score_viral_candidates
+from backend.services.viral_analyzer import (
+    _parse_webvtt_captions,
+    _parse_youtube_json3_captions,
+    _synthesize_remote_signals,
+    analyze_video_url,
+    build_viral_title,
+    score_viral_candidates,
+)
 
 
 def _synth_mp4(ffmpeg_path: str, out_path: Path, duration_sec: float = 14.0) -> None:
@@ -543,3 +551,142 @@ class TestExtendedClipDurations:
             {"channel_id": ch_id, "duration_sec": 90},
             {"channel_id": ch_id, "duration_sec": None},
         ]
+
+
+class TestRemoteZeroFullDownloadScan:
+    """Verify remote YouTube/Twitch 4-hour scan without downloading full video."""
+
+    def test_parses_youtube_json3_and_webvtt_captions(self) -> None:
+        json3_payload = {
+            "events": [
+                {
+                    "tStartMs": 12000,
+                    "dDurationMs": 3200,
+                    "segs": [
+                        {"utf8": "Wait ", "tOffsetMs": 0},
+                        {"utf8": "why did ", "tOffsetMs": 600},
+                        {"utf8": "that happen?!", "tOffsetMs": 1500},
+                    ],
+                }
+            ]
+        }
+        words, segs = _parse_youtube_json3_captions(json3_payload)
+        assert len(words) == 5
+        assert len(segs) == 1
+        assert segs[0]["text"] == "Wait why did that happen?!"
+        assert segs[0]["start"] == pytest.approx(12.0)
+
+        vtt_text = (
+            "WEBVTT\n\n"
+            "01:02:10.000 --> 01:02:14.000\n"
+            "<c>No</c> way that clutch worked!\n\n"
+            "01:02:14.500 --> 01:02:18.000\n"
+            "Chat look at that score!\n"
+        )
+        v_words, v_segs = _parse_webvtt_captions(vtt_text)
+        assert len(v_segs) == 2
+        assert v_segs[0]["start"] == pytest.approx(3730.0)
+        assert len(v_words) == 10
+
+    @pytest.mark.asyncio
+    async def test_analyze_video_url_scans_4h_stream_remotely_and_downloads_only_clip_range(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ffmpeg_path = resolve_ffmpeg_path()
+        if not ffmpeg_path:
+            pytest.skip("FFmpeg unavailable in test environment")
+
+        settings = Settings(data_dir=tmp_path / "data")
+        settings.ensure_data_dirs()
+        init_db(settings.db_path)
+        session_factory = get_session_factory(settings.db_path)
+
+        # 4-hour stream (14,400s) with Most Replayed heatmap spike around 7200..7235s
+        fake_info = {
+            "id": "q6fgVVmdpgY",
+            "title": "4 Hour Marathon Stream",
+            "uploader": "StreamerPro",
+            "duration": 14400.0,
+            "heatmap": [
+                {"start_time": 0.0, "end_time": 7190.0, "value": 0.10},
+                {"start_time": 7200.0, "end_time": 7236.0, "value": 0.98},
+                {"start_time": 7240.0, "end_time": 14400.0, "value": 0.12},
+            ],
+        }
+        hook_words = [
+            CaptionWord(start=7200.5, end=7201.0, word="Wait"),
+            CaptionWord(start=7201.1, end=7201.6, word="why"),
+            CaptionWord(start=7201.7, end=7202.3, word="did"),
+            CaptionWord(start=7202.4, end=7203.2, word="that"),
+            CaptionWord(start=7203.3, end=7204.2, word="secret"),
+            CaptionWord(start=7204.3, end=7205.2, word="boss"),
+            CaptionWord(start=7205.3, end=7206.5, word="explode?!"),
+        ]
+        remote_segs = [
+            {
+                "start": 7200.5,
+                "end": 7215.0,
+                "text": "Wait why did that secret boss explode?!",
+                "words": hook_words,
+            },
+            {
+                "start": 7215.5,
+                "end": 7234.0,
+                "text": "No way that is the craziest clutch in the entire four hour stream!",
+                "words": [],
+            },
+        ]
+
+        downloaded_ranges: list[tuple[float, float]] = []
+
+        def _fake_extract_remote(url: str, ff: str) -> dict[str, Any]:
+            return fake_info
+
+        async def _fake_remote_transcript(
+            info: dict[str, Any],
+        ) -> tuple[list[CaptionWord], list[dict[str, Any]]]:
+            return hook_words, remote_segs
+
+        def _fake_download_section(
+            canonical_url: str,
+            info: dict[str, Any],
+            clip_start: float,
+            clip_end: float,
+            out_path: Path,
+            work_dir: Path,
+            ff: str,
+        ) -> Path:
+            downloaded_ranges.append((clip_start, clip_end))
+            _synth_mp4(ff, out_path, duration_sec=2.5)
+            return out_path
+
+        monkeypatch.setattr(viral_analyzer, "_extract_remote_video_info_sync", _fake_extract_remote)
+        monkeypatch.setattr(viral_analyzer, "_fetch_remote_youtube_transcript", _fake_remote_transcript)
+        monkeypatch.setattr(viral_analyzer, "_download_clip_section_sync", _fake_download_section)
+
+        audio_s, motion_s = _synthesize_remote_signals(14400.0, fake_info, remote_segs, [])
+        assert len(audio_s) == 14400
+        assert len(motion_s) == 14400
+
+        try:
+            res = await analyze_video_url(
+                "https://www.youtube.com/watch?v=q6fgVVmdpgY",
+                max_clips=1,
+                min_clip_sec=20.0,
+                max_clip_sec=50.0,
+                viral_threshold=45.0,
+                use_speech_analysis=True,
+                settings=settings,
+                session_factory=session_factory,
+            )
+        finally:
+            dispose_engines()
+
+        assert res["remote_range_mode"] is True
+        assert len(res["clips_created"]) == 1
+        assert len(downloaded_ranges) == 1
+        c_start, c_end = downloaded_ranges[0]
+        assert 7199.0 <= c_start <= 7202.0
+        assert 7233.0 <= c_end <= 7236.0
