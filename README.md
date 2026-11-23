@@ -54,10 +54,10 @@ Self-hosted real-time Twitch live stream and VOD auto-clipper with an integrated
    cd ..
    ```
 
-4. Launch the Studio:
+4. Launch the Studio (double-click `Start-StreamClippers.bat` in File Explorer, or run in PowerShell):
 
    ```powershell
-   .\Start-StreamClippers.ps1
+   .\Start-StreamClippers.bat
    ```
 
    Pass `-Dev` to run the Vite dev server on `http://127.0.0.1:5174` alongside the FastAPI backend on `http://127.0.0.1:8430`. Pass `-CheckOnly` to verify backend imports without starting the server.

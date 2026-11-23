@@ -46,6 +46,27 @@ if ($CheckOnly) {
     exit $LASTEXITCODE
 }
 
+# Stop any previous StreamClippers listener on $Port so 1-click relaunches never fail with EADDRINUSE
+$ExistingConns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+if ($ExistingConns) {
+    foreach ($Conn in $ExistingConns) {
+        if ($Conn.OwningProcess -and ($Conn.OwningProcess -ne $PID)) {
+            Write-Host "[StreamClippers] Stopping previous server on port $Port (PID $($Conn.OwningProcess))..."
+            Stop-Process -Id $Conn.OwningProcess -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Start-Sleep -Milliseconds 400
+}
+
+# Clean up any leftover partial analyze/upload temp directories from interrupted sessions
+$BuffersDir = Join-Path $ProjectRoot "data\buffers"
+if (Test-Path $BuffersDir) {
+    Get-ChildItem -Path $BuffersDir -Directory -Filter "analyze_*" -ErrorAction SilentlyContinue |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    Get-ChildItem -Path $BuffersDir -Directory -Filter "upload_*" -ErrorAction SilentlyContinue |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 $FrontendDir = Join-Path $ProjectRoot "frontend"
 $FrontendDistIndex = Join-Path $FrontendDir "dist\index.html"
 $FrontendPkgJson = Join-Path $FrontendDir "package.json"
