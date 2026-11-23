@@ -1,11 +1,23 @@
 import { useState } from 'react'
-import { Bookmark, Clapperboard, Play, Plus, Scissors, SlidersHorizontal, Square, Trash2 } from 'lucide-react'
+import {
+  Bookmark,
+  Clapperboard,
+  Folder,
+  FolderOpen,
+  Play,
+  Plus,
+  Scissors,
+  SlidersHorizontal,
+  Square,
+  Trash2,
+} from 'lucide-react'
 import { extractTwitchLogin } from '../api'
 import type {
   Channel,
   ChannelCreateInput,
   ChannelMetadataEvent,
   ChannelUpdateInput,
+  ClipFolder,
   HypeTickEvent,
   PublishClipResponse,
   StreamMarkerResponse,
@@ -20,6 +32,9 @@ interface ChannelRailProps {
   latestTicks: Record<number, HypeTickEvent>
   metadataByChannel: Record<number, ChannelMetadataEvent>
   twitchStatus: TwitchStatus | null
+  clipFolders: ClipFolder[]
+  activeFolderKey: string
+  onSelectFolder: (folderKey: string) => void
   onSelectChannel: (channelId: number) => void
   onRetry: () => void
   onCreateChannel: (payload: ChannelCreateInput, startImmediately?: boolean) => Promise<void>
@@ -47,6 +62,9 @@ export function ChannelRail({
   latestTicks,
   metadataByChannel,
   twitchStatus,
+  clipFolders,
+  activeFolderKey,
+  onSelectFolder,
   onSelectChannel,
   onRetry,
   onCreateChannel,
@@ -719,6 +737,76 @@ export function ChannelRail({
                 </li>
               )
             })}
+          </ul>
+        )}
+      </div>
+
+      {/* Video Folders Stack */}
+      <div className="border-t border-rule bg-paper-2 flex flex-col">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-rule">
+          <div className="flex items-center gap-2">
+            <Folder size={14} className="text-accent" aria-hidden="true" />
+            <h2 className="section-title text-ink text-sm">Video Folders</h2>
+          </div>
+          <span className="num text-xs text-muted">{clipFolders.length}</span>
+        </div>
+
+        {clipFolders.length === 0 ? (
+          <p className="p-3 text-xs text-muted">
+            Analyzed video URLs, uploads, and live captures will stack into folders here.
+          </p>
+        ) : (
+          <ul className="list-none m-0 p-2 flex flex-col gap-1.5 max-h-64 overflow-y-auto">
+            {clipFolders.map((folder) => {
+              const isActive = activeFolderKey === folder.key
+              return (
+                <li
+                  key={folder.key}
+                  className={`p-2 border ${
+                    isActive ? 'border-accent bg-paper-3' : 'border-rule bg-paper'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    aria-pressed={isActive}
+                    onClick={() => onSelectFolder(folder.key)}
+                    className="interactive-row px-1 py-1 min-h-8 flex items-center justify-between gap-2"
+                  >
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      {isActive ? (
+                        <FolderOpen size={14} className="text-accent shrink-0" aria-hidden="true" />
+                      ) : (
+                        <Folder size={14} className="text-muted shrink-0" aria-hidden="true" />
+                      )}
+                      <span className="text-xs font-medium text-ink truncate">
+                        {folder.label}
+                      </span>
+                    </span>
+                    <span className="num text-xs font-medium text-accent shrink-0">
+                      {folder.clipCount}
+                    </span>
+                  </button>
+                  <div className="flex items-center justify-between text-xs text-muted px-1 mt-0.5">
+                    <span className="truncate">{folder.sublabel}</span>
+                    <span className="num shrink-0">{folder.pendingCount} pending</span>
+                  </div>
+                </li>
+              )
+            })}
+            {clipFolders.length > 1 && (
+              <li>
+                <button
+                  type="button"
+                  aria-pressed={activeFolderKey === '__all__'}
+                  onClick={() => onSelectFolder('__all__')}
+                  className={`btn btn--compact w-full ${
+                    activeFolderKey === '__all__' ? 'btn--accent-outline' : 'btn--quiet'
+                  }`}
+                >
+                  All Video Folders
+                </button>
+              </li>
+            )}
           </ul>
         )}
       </div>

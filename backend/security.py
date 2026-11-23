@@ -323,3 +323,35 @@ def sanitize_chat_text(text: str, max_len: int = 240) -> str:
     if max_len >= 0 and len(cleaned) > max_len:
         cleaned = cleaned[:max_len].rstrip()
     return cleaned
+
+
+def build_video_folder_slug(
+    source_type: str,
+    source_ref: str,
+    channel_login: str = "",
+) -> str:
+    """Derive a safe, deterministic subfolder slug for organizing a video's clips on disk."""
+    ref = (source_ref or "").strip()
+    if source_type == "youtube_vod" and ref:
+        parsed = urlsplit(ref)
+        v_vals = parse_qs(parsed.query).get("v", [])
+        if v_vals and _YOUTUBE_ID_RE.fullmatch(v_vals[0]):
+            return f"yt_{v_vals[0]}"
+        parts = [p for p in parsed.path.split("/") if p]
+        if parts and _YOUTUBE_ID_RE.fullmatch(parts[-1]):
+            return f"yt_{parts[-1]}"
+
+    if source_type == "vod" and ref:
+        m = _TWITCH_VOD_PATH_RE.search(urlsplit(ref).path)
+        if m:
+            return f"vod_{m.group(1)}"
+
+    if source_type == "video_upload" and ref:
+        stem = re.sub(r"[^a-zA-Z0-9_-]+", "_", Path(ref).stem).strip("_")[:36]
+        if stem:
+            return f"upload_{stem.lower()}"
+
+    login_clean = re.sub(r"[^a-zA-Z0-9_]+", "", channel_login or "").lower()[:25]
+    if login_clean:
+        return f"{source_type or 'clip'}_{login_clean}"
+    return "general_clips"

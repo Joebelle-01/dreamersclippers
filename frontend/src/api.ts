@@ -4,6 +4,7 @@ import type {
   ChannelCreateInput,
   ChannelUpdateInput,
   ChatSample,
+  ClipFolder,
   ClipItem,
   ClipPeriod,
   ClipUpdateInput,
@@ -293,6 +294,93 @@ export function parseCaptions(clip: ClipItem): CaptionSegment[] {
   } catch {
     return []
   }
+}
+
+export function getClipFolderKey(clip: ClipItem): string {
+  const ref = (clip.source_ref || '').trim()
+  if (ref) {
+    return ref
+  }
+  return `${clip.source_type || 'live'}:${clip.channel_login || 'default'}`
+}
+
+export function getClipFolderMeta(clip: ClipItem): { label: string; sublabel: string } {
+  const ref = (clip.source_ref || '').trim()
+  if (clip.source_type === 'youtube_vod') {
+    let ytId = ref
+    try {
+      const parsed = new URL(ref)
+      ytId =
+        parsed.searchParams.get('v') ||
+        parsed.pathname.split('/').filter(Boolean).pop() ||
+        ref
+    } catch {
+      ytId = ref
+    }
+    const sub =
+      clip.channel_login && clip.channel_login !== 'twitch_vod'
+        ? `@${clip.channel_login}`
+        : 'YouTube Video'
+    return { label: `YouTube · ${ytId}`, sublabel: sub }
+  }
+
+  if (clip.source_type === 'vod') {
+    const match = ref.match(/\/videos\/(\d+)/)
+    const vodId = match ? match[1] : ref || 'VOD'
+    return {
+      label: `VOD · #${vodId}`,
+      sublabel: clip.channel_login ? `@${clip.channel_login}` : 'Twitch VOD',
+    }
+  }
+
+  if (clip.source_type === 'video_upload') {
+    return {
+      label: ref || 'Uploaded Video',
+      sublabel: 'Local Video File',
+    }
+  }
+
+  if (clip.source_type === 'twitch_clip') {
+    return {
+      label: `@${clip.channel_login} · Clips`,
+      sublabel: 'Imported Twitch Clips',
+    }
+  }
+
+  return {
+    label: `@${clip.channel_login} · Live`,
+    sublabel: 'Live Stream Buffer',
+  }
+}
+
+export function groupClipsIntoFolders(clips: ClipItem[]): ClipFolder[] {
+  const map = new Map<string, ClipFolder>()
+  for (const clip of clips) {
+    if (clip.status === 'discarded') continue
+    const key = getClipFolderKey(clip)
+    const existing = map.get(key)
+    if (!existing) {
+      const meta = getClipFolderMeta(clip)
+      map.set(key, {
+        key,
+        label: meta.label,
+        sublabel: meta.sublabel,
+        sourceType: clip.source_type,
+        clipCount: 1,
+        pendingCount: clip.status === 'pending_review' ? 1 : 0,
+        exportedCount: clip.status === 'exported' ? 1 : 0,
+        latestAt: clip.captured_at || '',
+      })
+    } else {
+      existing.clipCount += 1
+      if (clip.status === 'pending_review') existing.pendingCount += 1
+      if (clip.status === 'exported') existing.exportedCount += 1
+      if ((clip.captured_at || '') > existing.latestAt) {
+        existing.latestAt = clip.captured_at || existing.latestAt
+      }
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => b.latestAt.localeCompare(a.latestAt))
 }
 
 export function fetchSystemStatus(): Promise<SystemStatus> {

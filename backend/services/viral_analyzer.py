@@ -22,6 +22,7 @@ import yt_dlp
 from backend.config import Settings, resolve_ffmpeg_path, resolve_ffprobe_path
 from backend.models import CaptionSegment, CaptionWord, ClipItem, ClipRead
 from backend.security import (
+    build_video_folder_slug,
     safe_resolve_under,
     sanitize_chat_text,
     validate_crop_box,
@@ -829,6 +830,10 @@ async def analyze_local_video(
             },
         )
 
+        folder_slug = build_video_folder_slug(source_type, source_ref or source_label, channel_login)
+        clip_folder_dir = safe_resolve_under(settings.clips_dir, folder_slug)
+        clip_folder_dir.mkdir(parents=True, exist_ok=True)
+
         created_ids: list[str] = []
         for idx, cand in enumerate(candidates, start=1):
             clip_start = max(0.0, float(cand["start"]))
@@ -837,7 +842,7 @@ async def analyze_local_video(
                 continue
 
             clip_id = str(uuid4())
-            raw_clip_path = safe_resolve_under(settings.clips_dir, f"{clip_id}.mp4")
+            raw_clip_path = safe_resolve_under(clip_folder_dir, f"{clip_id}.mp4")
             await asyncio.to_thread(
                 _cut_vod_segment_sync,
                 video_path,
@@ -1640,6 +1645,10 @@ async def analyze_video_url(
             },
         )
 
+        folder_slug = build_video_folder_slug(source_type, canonical_url, channel_login)
+        clip_folder_dir = safe_resolve_under(settings.clips_dir, folder_slug)
+        clip_folder_dir.mkdir(parents=True, exist_ok=True)
+
         created_ids: list[str] = []
         for idx, cand in enumerate(candidates, start=1):
             clip_start = max(0.0, float(cand["start"]))
@@ -1648,7 +1657,7 @@ async def analyze_video_url(
                 continue
 
             clip_id = str(uuid4())
-            raw_clip_path = safe_resolve_under(settings.clips_dir, f"{clip_id}.mp4")
+            raw_clip_path = safe_resolve_under(clip_folder_dir, f"{clip_id}.mp4")
 
             await asyncio.to_thread(
                 _download_clip_section_sync,

@@ -6,6 +6,7 @@ import {
   ChevronUp,
   Download,
   Film,
+  FolderOpen,
   Image,
   Pause,
   Play,
@@ -19,6 +20,7 @@ import {
   exportSrtUrl,
   exportThumbUrl,
   exportVideoUrl,
+  getClipFolderKey,
   parseCaptions,
   parseChatSamples,
   parseCropBox,
@@ -30,6 +32,7 @@ import type {
   CaptionPosition,
   CaptionSegment,
   CaptionStyle,
+  ClipFolder,
   ClipItem,
   ClipStatus,
   ClipUpdateInput,
@@ -40,6 +43,9 @@ import type {
 
 interface ReviewWorkbenchProps {
   clips: ClipItem[]
+  clipFolders: ClipFolder[]
+  activeFolderKey: string
+  onSelectFolder: (folderKey: string) => void
   loading: boolean
   error: string | null
   selectedClipId: string | null
@@ -98,6 +104,9 @@ function formatSourceBadge(sourceType: string): string {
 
 export function ReviewWorkbench({
   clips,
+  clipFolders,
+  activeFolderKey,
+  onSelectFolder,
   loading,
   error,
   selectedClipId,
@@ -114,16 +123,25 @@ export function ReviewWorkbench({
 }: ReviewWorkbenchProps) {
   const [filter, setFilter] = useState<QueueFilter>('pending_review')
 
+  const folderClips = useMemo(() => {
+    const valid = clips.filter((c) => c.status !== 'discarded')
+    if (activeFolderKey === '__all__' || !activeFolderKey) {
+      return valid
+    }
+    const inFolder = valid.filter((c) => getClipFolderKey(c) === activeFolderKey)
+    return inFolder.length > 0 ? inFolder : valid
+  }, [activeFolderKey, clips])
+
   const filteredClips = useMemo(() => {
-    if (filter === 'all') return clips.filter((c) => c.status !== 'discarded')
-    return clips.filter((c) => c.status === filter)
-  }, [clips, filter])
+    if (filter === 'all') return folderClips
+    return folderClips.filter((c) => c.status === filter)
+  }, [folderClips, filter])
 
   const selectedClip = useMemo(() => {
-    const exact = clips.find((c) => c.id === selectedClipId)
-    if (exact) return exact
-    return filteredClips[0] ?? clips[0] ?? null
-  }, [clips, filteredClips, selectedClipId])
+    const exactInFolder = folderClips.find((c) => c.id === selectedClipId)
+    if (exactInFolder) return exactInFolder
+    return filteredClips[0] ?? folderClips[0] ?? null
+  }, [filteredClips, folderClips, selectedClipId])
 
   const [webcamBox, setWebcamBox] = useState<CropBox>(DEFAULT_WEBCAM)
   const [gameplayBox, setGameplayBox] = useState<CropBox>(DEFAULT_GAMEPLAY)
@@ -769,134 +787,174 @@ export function ReviewWorkbench({
 
   const counts = useMemo(() => {
     return {
-      pending_review: clips.filter((c) => c.status === 'pending_review').length,
-      exported: clips.filter((c) => c.status === 'exported').length,
-      all: clips.filter((c) => c.status !== 'discarded').length,
+      pending_review: folderClips.filter((c) => c.status === 'pending_review').length,
+      exported: folderClips.filter((c) => c.status === 'exported').length,
+      all: folderClips.length,
     }
-  }, [clips])
+  }, [folderClips])
+
+  const activeFolderObj = useMemo(
+    () => clipFolders.find((f) => f.key === activeFolderKey) ?? null,
+    [activeFolderKey, clipFolders],
+  )
 
   return (
     <section aria-labelledby="workbench-heading" className="flex-1 flex flex-col min-w-0 bg-paper">
-      {/* Queue Filter Strip */}
-      <div className="border-b border-rule bg-paper-2 p-4">
-        <div className="flex items-center justify-between gap-4 flex-wrap mb-3">
-          <div className="flex items-center gap-3">
+      {/* Workbench Header & Folder Filter Strip */}
+      <div className="border-b border-rule bg-paper-2 px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
             <Film size={17} className="text-accent shrink-0" aria-hidden="true" />
             <h2 id="workbench-heading" className="section-title text-ink">
               Review Workbench
             </h2>
           </div>
 
-          <div role="tablist" aria-label="Clip queue filter" className="flex items-center">
-            {(
-              [
-                { id: 'pending_review', label: `Pending Review (${counts.pending_review})` },
-                { id: 'exported', label: `Exported (${counts.exported})` },
-                { id: 'all', label: `All (${counts.all})` },
-              ] as const
-            ).map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={filter === tab.id}
-                onClick={() => setFilter(tab.id)}
-                className="seg-cell"
+          {clipFolders.length > 0 && (
+            <div className="flex items-center gap-2 pl-3 border-l border-rule">
+              <FolderOpen size={15} className="text-accent shrink-0" aria-hidden="true" />
+              <select
+                aria-label="Active video folder"
+                value={activeFolderKey}
+                onChange={(e) => onSelectFolder(e.target.value)}
+                className="field-select text-xs"
               >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+                {clipFolders.map((folder) => (
+                  <option key={folder.key} value={folder.key}>
+                    {folder.label} ({folder.clipCount} clips)
+                  </option>
+                ))}
+                {clipFolders.length > 1 && (
+                  <option value="__all__">
+                    All Video Folders ({clips.filter((c) => c.status !== 'discarded').length} clips)
+                  </option>
+                )}
+              </select>
+            </div>
+          )}
         </div>
 
-        {loading && clips.length === 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3" aria-busy="true" aria-label="Loading clips">
-            {[1, 2, 3].map((n) => (
-              <div key={n} className="h-20 bg-paper border border-rule p-3">
-                <div className="h-4 bg-paper-3 w-1/2 mb-2" />
-                <div className="h-3 bg-paper-3 w-3/4" />
-              </div>
-            ))}
-          </div>
-        ) : error && clips.length === 0 ? (
-          <div className="flex items-center justify-between gap-4 p-3 border border-error bg-paper">
-            <p className="text-sm text-error">{error}</p>
-            <button type="button" onClick={onRetryClips} className="btn btn--quiet btn--compact">
-              <RefreshCw size={14} aria-hidden="true" />
-              <span>Retry</span>
+        <div role="tablist" aria-label="Clip queue filter" className="flex items-center">
+          {(
+            [
+              { id: 'pending_review', label: `Pending (${counts.pending_review})` },
+              { id: 'exported', label: `Exported (${counts.exported})` },
+              { id: 'all', label: `All (${counts.all})` },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={filter === tab.id}
+              onClick={() => setFilter(tab.id)}
+              className="seg-cell"
+            >
+              {tab.label}
             </button>
-          </div>
-        ) : filteredClips.length === 0 ? (
-          <div className="p-4 border border-rule bg-paper flex items-center justify-between gap-4 flex-wrap">
-            <div>
-              <p className="text-sm font-medium text-ink">
-                {filter === 'pending_review'
-                  ? 'No clips waiting in the review queue.'
-                  : filter === 'exported'
-                    ? 'No 9:16 exports rendered yet.'
-                    : 'No captured clips yet.'}
-              </p>
-              <p className="text-sm text-muted">
-                Monitor a live Twitch channel or analyze any full video to find viral clips.
-              </p>
-            </div>
-            <button type="button" onClick={onOpenVodModal} className="btn btn--accent-outline">
-              <Video size={15} aria-hidden="true" />
-              <span>Analyze Video</span>
-            </button>
-          </div>
-        ) : (
-          <div className="flex items-stretch gap-3 overflow-x-auto pb-1">
-            {filteredClips.map((clip) => {
-              const active = selectedClip?.id === clip.id
-              return (
-                <button
-                  key={clip.id}
-                  type="button"
-                  data-selected={active ? 'true' : 'false'}
-                  onClick={() => onSelectClip(clip.id)}
-                  className="interactive-row shrink-0 w-72 p-2 border border-rule bg-paper flex items-center gap-3"
-                >
-                  <div className="w-20 h-12 bg-paper-2 border border-rule shrink-0 overflow-hidden flex items-center justify-center">
-                    {clip.thumbnail_path ? (
-                      <img
-                        src={thumbImageUrl(clip.id)}
-                        alt=""
-                        width={160}
-                        height={90}
-                        onError={(e) => {
-                          e.currentTarget.hidden = true
-                        }}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <Film size={16} className="text-muted" aria-hidden="true" />
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium text-ink truncate">{clip.title}</span>
-                      <span className="figure-lg text-accent shrink-0">
-                        {clip.hype_score.toFixed(0)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between text-xs text-muted mt-1">
-                      <span className="truncate">{clip.trigger_reason || clip.channel_login}</span>
-                      <span className="num shrink-0 ml-2">
-                        {formatTimecode(clip.duration_sec)}
-                      </span>
-                    </div>
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-        )}
+          ))}
+        </div>
       </div>
 
-      {/* Main Signature Editing Stage */}
-      {selectedClip ? (
-        <div className="p-4 flex flex-col gap-4">
+      {/* Main Split Body: Left Vertical Clip Stack + Right Signature Editing Stage */}
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[268px_minmax(0,1fr)] min-h-0">
+        {/* Left Vertical Clip Stack (Only active folder's clips) */}
+        <aside
+          aria-label="Active video folder clips"
+          className="border-b lg:border-b-0 lg:border-r border-rule bg-paper-2 p-3 flex flex-col gap-2"
+        >
+          <div className="flex items-center justify-between gap-2 pb-2 border-b border-rule">
+            <span className="text-xs font-medium text-ink truncate">
+              {activeFolderObj ? activeFolderObj.label : 'All Video Folders'}
+            </span>
+            <span className="num text-xs text-accent font-medium shrink-0">
+              {filteredClips.length} clip{filteredClips.length === 1 ? '' : 's'}
+            </span>
+          </div>
+
+          {loading && clips.length === 0 ? (
+            <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading clips">
+              {[1, 2, 3].map((n) => (
+                <div key={n} className="h-16 bg-paper border border-rule p-2">
+                  <div className="h-3 bg-paper-3 w-1/2 mb-2" />
+                  <div className="h-2 bg-paper-3 w-3/4" />
+                </div>
+              ))}
+            </div>
+          ) : error && clips.length === 0 ? (
+            <div className="flex flex-col gap-2 p-3 border border-error bg-paper">
+              <p className="text-xs text-error">{error}</p>
+              <button type="button" onClick={onRetryClips} className="btn btn--quiet btn--compact">
+                <RefreshCw size={13} aria-hidden="true" />
+                <span>Retry</span>
+              </button>
+            </div>
+          ) : filteredClips.length === 0 ? (
+            <div className="p-3 border border-rule bg-paper flex flex-col gap-2">
+              <p className="text-xs font-medium text-ink">
+                {filter === 'pending_review'
+                  ? 'No pending clips in this folder.'
+                  : filter === 'exported'
+                    ? 'No exported clips in this folder yet.'
+                    : 'No clips in this folder yet.'}
+              </p>
+              <button type="button" onClick={onOpenVodModal} className="btn btn--compact btn--accent-outline w-full">
+                <Video size={14} aria-hidden="true" />
+                <span>Analyze Video</span>
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2 max-h-[820px] overflow-y-auto pr-0.5">
+              {filteredClips.map((clip) => {
+                const active = selectedClip?.id === clip.id
+                return (
+                  <button
+                    key={clip.id}
+                    type="button"
+                    data-selected={active ? 'true' : 'false'}
+                    onClick={() => onSelectClip(clip.id)}
+                    className="interactive-row w-full p-2 border border-rule bg-paper flex items-center gap-2.5 text-left"
+                  >
+                    <div className="w-16 h-11 bg-paper-2 border border-rule shrink-0 overflow-hidden flex items-center justify-center">
+                      {clip.thumbnail_path ? (
+                        <img
+                          src={thumbImageUrl(clip.id)}
+                          alt=""
+                          width={160}
+                          height={90}
+                          onError={(e) => {
+                            e.currentTarget.hidden = true
+                          }}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <Film size={15} className="text-muted" aria-hidden="true" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-1.5">
+                        <span className="text-xs font-medium text-ink truncate">{clip.title}</span>
+                        <span className="num text-sm font-semibold text-accent shrink-0">
+                          {clip.hype_score.toFixed(0)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs text-muted mt-1">
+                        <span className="truncate">{formatStatusLabel(clip.status)}</span>
+                        <span className="num shrink-0 ml-1">
+                          {formatTimecode(clip.duration_sec)}
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </aside>
+
+        {/* Right Signature Editing Stage */}
+        {selectedClip ? (
+          <div className="p-4 flex flex-col gap-4 min-w-0">
           {/* Clip Header & Framing Preset Bar */}
           <div className="flex items-center justify-between gap-4 flex-wrap pb-3 border-b border-rule">
             <div className="min-w-0">
@@ -1615,6 +1673,7 @@ export function ReviewWorkbench({
           </div>
         </div>
       )}
+      </div>
     </section>
   )
 }

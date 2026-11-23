@@ -17,7 +17,11 @@ from backend.config import Settings, resolve_ffmpeg_path
 from backend.db import dispose_engines, get_session_factory, init_db
 from backend.main import create_app
 from backend.models import CaptionWord, ChannelCreate, ClipItem, VideoAnalyzeUrlRequest
-from backend.security import validate_video_upload_filename, validate_video_url
+from backend.security import (
+    build_video_folder_slug,
+    validate_video_upload_filename,
+    validate_video_url,
+)
 from backend.services.caption_service import slice_captions_for_window
 from backend.services.viral_analyzer import (
     _parse_webvtt_captions,
@@ -461,6 +465,7 @@ class TestVideoAnalysisApi:
             parsed_caps = json.loads(clip["captions_json"])
             assert len(parsed_caps) >= 1
             assert Path(clip["raw_video_path"]).is_file()
+            assert Path(clip["raw_video_path"]).parent.name == "upload_recorded_match"
             assert Path(clip["thumbnail_path"]).is_file()
 
         # Temporary upload buffer folder must be cleaned up
@@ -690,3 +695,13 @@ class TestRemoteZeroFullDownloadScan:
         c_start, c_end = downloaded_ranges[0]
         assert 7199.0 <= c_start <= 7202.0
         assert 7233.0 <= c_end <= 7236.0
+        assert (
+            build_video_folder_slug(
+                "youtube_vod",
+                "https://www.youtube.com/watch?v=q6fgVVmdpgY",
+                "StreamerPro",
+            )
+            == "yt_q6fgVVmdpgY"
+        )
+        assert list((settings.clips_dir / "yt_q6fgVVmdpgY").glob("*.mp4"))
+

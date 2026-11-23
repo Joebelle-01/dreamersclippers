@@ -14,6 +14,8 @@ import {
   fetchTwitchTopClips,
   generateClipCaptions,
   generateClipThumbnail,
+  getClipFolderKey,
+  groupClipsIntoFolders,
   importTwitchClip,
   publishChannelClip,
   renderClipExport,
@@ -71,6 +73,7 @@ export function App() {
 
   const [selectedChannelId, setSelectedChannelId] = useState<number | null>(null)
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
+  const [selectedFolderKey, setSelectedFolderKey] = useState<string>('__latest__')
 
   const [wsState, setWsState] = useState<'connecting' | 'open' | 'offline'>('connecting')
   const [ticksByChannel, setTicksByChannel] = useState<Record<number, HypeTickEvent[]>>({})
@@ -190,9 +193,16 @@ export function App() {
 
       if (event.type === 'clip_created') {
         const clip = 'clip' in event.payload ? event.payload.clip : event.payload
+        const folderKey = getClipFolderKey(clip)
         setClips((prev) => {
           const filtered = prev.filter((c) => c.id !== clip.id)
           return [clip, ...filtered]
+        })
+        setSelectedFolderKey((prevKey) => {
+          if (prevKey !== folderKey) {
+            setSelectedClipId(clip.id)
+          }
+          return folderKey
         })
         setSelectedClipId((prev) => prev ?? clip.id)
         void loadStatus()
@@ -330,6 +340,7 @@ export function App() {
   const handleClipNow = async (channelId: number, durationSec?: number) => {
     const created = await triggerClipNow(channelId, durationSec)
     setClips((prev) => [created, ...prev.filter((c) => c.id !== created.id)])
+    setSelectedFolderKey(getClipFolderKey(created))
     setSelectedClipId(created.id)
     void loadStatus()
   }
@@ -438,6 +449,7 @@ export function App() {
   ) => {
     const imported = await importTwitchClip(clipUrl, broadcasterLogin, preferPortrait)
     setClips((prev) => [imported, ...prev.filter((c) => c.id !== imported.id)])
+    setSelectedFolderKey(getClipFolderKey(imported))
     setSelectedClipId(imported.id)
     setTwitchModalOpen(false)
     void loadStatus()
@@ -463,6 +475,35 @@ export function App() {
       systemStatus?.exported_clips ??
       clips.filter((c) => c.status === 'exported').length,
     [clips, systemStatus?.exported_clips],
+  )
+
+  const clipFolders = useMemo(() => groupClipsIntoFolders(clips), [clips])
+
+  const activeFolderKey = useMemo(() => {
+    if (selectedFolderKey === '__all__') return '__all__'
+    if (
+      selectedFolderKey !== '__latest__' &&
+      clipFolders.some((f) => f.key === selectedFolderKey)
+    ) {
+      return selectedFolderKey
+    }
+    return clipFolders[0]?.key ?? '__all__'
+  }, [clipFolders, selectedFolderKey])
+
+  const handleSelectFolder = useCallback(
+    (folderKey: string) => {
+      setSelectedFolderKey(folderKey)
+      if (folderKey === '__all__') return
+      const matching = clips.filter(
+        (c) => c.status !== 'discarded' && getClipFolderKey(c) === folderKey,
+      )
+      const firstPending = matching.find((c) => c.status === 'pending_review')
+      const pick = firstPending ?? matching[0]
+      if (pick) {
+        setSelectedClipId(pick.id)
+      }
+    },
+    [clips],
   )
 
   return (
@@ -493,6 +534,9 @@ export function App() {
           latestTicks={latestTicks}
           metadataByChannel={metadataByChannel}
           twitchStatus={twitchStatus}
+          clipFolders={clipFolders}
+          activeFolderKey={activeFolderKey}
+          onSelectFolder={handleSelectFolder}
           onSelectChannel={setSelectedChannelId}
           onRetry={loadChannels}
           onCreateChannel={handleCreateChannel}
@@ -514,6 +558,9 @@ export function App() {
 
           <ReviewWorkbench
             clips={clips}
+            clipFolders={clipFolders}
+            activeFolderKey={activeFolderKey}
+            onSelectFolder={handleSelectFolder}
             loading={clipsLoading}
             error={clipsError}
             selectedClipId={selectedClipId}

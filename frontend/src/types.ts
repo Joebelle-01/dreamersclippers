@@ -146,6 +146,17 @@ export interface ClipItem {
   exported_at: string | null
 }
 
+export interface ClipFolder {
+  key: string
+  label: string
+  sublabel: string
+  sourceType: string
+  clipCount: number
+  pendingCount: number
+  exportedCount: number
+  latestAt: string
+}
+
 export interface ClipUpdateInput {
   title?: string
   status?: ClipStatus
