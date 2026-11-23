@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link2, Radio, Sparkles, Upload, Video, X } from 'lucide-react'
+import { Check, CheckCircle2, Link2, Radio, Sparkles, Upload, Video, X } from 'lucide-react'
 import { detectVideoUrlPlatform, extractTwitchLogin } from '../api'
 import type {
   Channel,
@@ -67,6 +67,7 @@ export function VodScanModal({
   const [monitoringLive, setMonitoringLive] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [submittedJobId, setSubmittedJobId] = useState<string | null>(null)
+  const [dismissedJobId, setDismissedJobId] = useState<string | null>(null)
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -113,6 +114,7 @@ export function VodScanModal({
       return
     }
     setSelectedFile(candidate)
+    setDismissedJobId(activeJob?.job_id ?? null)
     setError(null)
   }
 
@@ -158,6 +160,7 @@ export function VodScanModal({
           use_speech_analysis: useSpeechAnalysis,
         })
         setSubmittedJobId(jobId)
+        setDismissedJobId(null)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unable to start video URL analysis.')
       } finally {
@@ -183,6 +186,7 @@ export function VodScanModal({
         use_speech_analysis: useSpeechAnalysis,
       })
       setSubmittedJobId(jobId)
+      setDismissedJobId(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to upload and analyze video.')
     } finally {
@@ -191,9 +195,21 @@ export function VodScanModal({
   }
 
   const visibleProgress =
-    activeJob && (!submittedJobId || activeJob.job_id === submittedJobId) ? activeJob : null
+    activeJob &&
+    activeJob.job_id !== dismissedJobId &&
+    (!submittedJobId || activeJob.job_id === submittedJobId)
+      ? activeJob
+      : null
   const rawProgress = visibleProgress?.progress ?? 0
   const pct = Math.max(0, Math.min(100, Math.round(rawProgress * (rawProgress <= 1 ? 100 : 1))))
+  const isJobFailed = Boolean(visibleProgress?.error || visibleProgress?.status === 'failed')
+  const isJobDone = Boolean(
+    visibleProgress &&
+      !isJobFailed &&
+      (visibleProgress.status === 'completed' || visibleProgress.stage === 'complete' || pct >= 100),
+  )
+  const isJobRunning = Boolean(visibleProgress && !isJobFailed && !isJobDone)
+  const busy = submitting || isJobRunning
 
   return (
     <dialog
@@ -279,6 +295,7 @@ export function VodScanModal({
                 value={videoUrl}
                 onChange={(e) => {
                   setVideoUrl(e.target.value)
+                  if (isJobDone && activeJob) setDismissedJobId(activeJob.job_id)
                   setError(null)
                 }}
                 onBlur={() => setTouched(true)}
@@ -484,12 +501,23 @@ export function VodScanModal({
           </label>
 
           {visibleProgress && (
-            <div className="p-3 border border-rule bg-paper flex flex-col gap-2">
-              <div className="flex items-center justify-between text-sm">
+            <div
+              className={`p-3 border bg-paper flex flex-col gap-2 ${
+                isJobDone ? 'border-success' : isJobFailed ? 'border-error' : 'border-rule'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2 text-sm">
                 <span className="font-medium text-ink">
                   {visibleProgress.message || visibleProgress.stage || 'Analyzing video'}
                 </span>
-                <span className="num text-accent font-medium">{pct}%</span>
+                {isJobDone ? (
+                  <span className="flex items-center gap-1.5 num text-success font-medium shrink-0">
+                    <CheckCircle2 size={15} aria-hidden="true" />
+                    <span>Done · 100%</span>
+                  </span>
+                ) : (
+                  <span className="num text-accent font-medium shrink-0">{pct}%</span>
+                )}
               </div>
               <div
                 role="progressbar"
@@ -501,19 +529,21 @@ export function VodScanModal({
               >
                 <div
                   className={
-                    visibleProgress.error || visibleProgress.status === 'failed'
+                    isJobFailed
                       ? 'h-full bg-error'
-                      : 'h-full bg-accent'
+                      : isJobDone
+                        ? 'h-full bg-success'
+                        : 'h-full bg-accent'
                   }
                   style={{ width: `${pct}%` }}
                 />
               </div>
               {visibleProgress.clips_found != null && (
-                <p className="text-xs text-muted num">
-                  {visibleProgress.clips_found} viral clip(s) extracted to Review Queue.
+                <p className={`text-xs num ${isJobDone ? 'text-success font-medium' : 'text-muted'}`}>
+                  {visibleProgress.clips_found} viral clip(s) ready in Review Queue.
                 </p>
               )}
-              {(visibleProgress.error || visibleProgress.status === 'failed') && (
+              {isJobFailed && (
                 <p className="text-xs text-error" role="alert">
                   {visibleProgress.error || visibleProgress.message || 'Video analysis failed.'}
                 </p>
@@ -522,18 +552,42 @@ export function VodScanModal({
           )}
 
           <div className="flex items-center justify-end gap-3 pt-2 border-t border-rule">
-            <button type="button" onClick={onClose} className="btn btn--quiet">
-              Close
-            </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              aria-busy={submitting}
-              className="btn btn--primary"
-            >
-              {submitting && <span className="desk-spinner" aria-hidden="true" />}
-              <span>{submitting ? 'Analyzing Video' : 'Find Viral Clips'}</span>
-            </button>
+            {isJobDone ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (visibleProgress) setDismissedJobId(visibleProgress.job_id)
+                  }}
+                  className="btn btn--quiet"
+                >
+                  Analyze Another
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="btn btn--primary"
+                >
+                  <Check size={15} aria-hidden="true" />
+                  <span>Done</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" onClick={onClose} className="btn btn--quiet">
+                  Close
+                </button>
+                <button
+                  type="submit"
+                  disabled={busy}
+                  aria-busy={busy}
+                  className="btn btn--primary"
+                >
+                  {busy && <span className="desk-spinner" aria-hidden="true" />}
+                  <span>{busy ? 'Analyzing Video' : 'Find Viral Clips'}</span>
+                </button>
+              </>
+            )}
           </div>
         </form>
       </div>

@@ -535,7 +535,18 @@ export function App() {
         open={vodModalOpen}
         channels={channels}
         activeJob={activeVodJob}
-        onClose={() => setVodModalOpen(false)}
+        onClose={() => {
+          setVodModalOpen(false)
+          setActiveVodJob((curr) =>
+            curr &&
+            (curr.status === 'completed' ||
+              curr.status === 'failed' ||
+              curr.stage === 'complete' ||
+              curr.progress >= 100)
+              ? null
+              : curr,
+          )
+        }}
         onAnalyzeUrl={handleAnalyzeUrl}
         onAnalyzeUpload={handleAnalyzeUpload}
         onMonitorLiveChannel={handleMonitorLiveChannel}
