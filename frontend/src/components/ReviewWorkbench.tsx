@@ -622,7 +622,7 @@ export function ReviewWorkbench({
       await onSavePreset(selectedClip.id)
       setActionFeedback({
         kind: 'success',
-        text: `Saved layout and crop preset to @${selectedClip.channel_login}.`,
+        text: `Synced webcam & gameplay framing to @${selectedClip.channel_login} and all pending clips in this folder.`,
       })
     } catch (err) {
       setActionFeedback({

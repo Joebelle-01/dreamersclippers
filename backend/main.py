@@ -1068,6 +1068,14 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
                 clip.gameplay_box_json = gameplay_json
 
             session.add(clip)
+            if (
+                has_webcam
+                or has_gameplay
+                or payload.layout_mode is not None
+                or payload.split_ratio is not None
+            ):
+                _sync_framing_to_folder_and_channel(session, clip)
+
             session.commit()
             session.refresh(clip)
             return ClipRead.from_orm_row(clip)
@@ -1143,6 +1151,47 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
             session.refresh(clip)
             return ClipRead.from_orm_row(clip)
 
+    def _sync_framing_to_folder_and_channel(
+        session: Any,
+        clip: ClipItem,
+    ) -> Channel | None:
+        """Propagate a clip's webcam/gameplay framing to sibling pending clips and its Channel preset."""
+        source_ref = (clip.source_ref or "").strip()
+        if source_ref:
+            sib_stmt = select(ClipItem).where(
+                ClipItem.source_ref == source_ref,
+                ClipItem.status == "pending_review",
+            )
+        else:
+            sib_stmt = select(ClipItem).where(
+                ClipItem.channel_login == clip.channel_login,
+                ClipItem.source_type == clip.source_type,
+                ClipItem.status == "pending_review",
+            )
+        for sibling in session.exec(sib_stmt).all():
+            if sibling.id == clip.id:
+                continue
+            sibling.layout_mode = clip.layout_mode
+            sibling.split_ratio = clip.split_ratio
+            sibling.webcam_box_json = clip.webcam_box_json
+            sibling.gameplay_box_json = clip.gameplay_box_json
+            session.add(sibling)
+
+        channel: Channel | None = (
+            session.get(Channel, clip.channel_id) if clip.channel_id is not None else None
+        )
+        if channel is None and clip.channel_login:
+            channel = session.exec(
+                select(Channel).where(Channel.channel_login == clip.channel_login)
+            ).first()
+        if channel is not None:
+            channel.preset_layout_mode = clip.layout_mode
+            channel.preset_split_ratio = clip.split_ratio
+            channel.preset_webcam_json = clip.webcam_box_json
+            channel.preset_gameplay_json = clip.gameplay_box_json
+            session.add(channel)
+        return channel
+
     @fastapi_app.post("/api/clips/{clip_id}/save-preset", response_model=ChannelRead)
     async def save_clip_preset_to_channel(clip_id: str, request: Request) -> ChannelRead:
         session_factory = _state_session_factory(request)
@@ -1151,19 +1200,13 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
             clip = session.get(ClipItem, clip_id)
             if clip is None:
                 raise HTTPException(status_code=404, detail="Clip not found")
-            channel = session.get(Channel, clip.channel_id)
+            channel = _sync_framing_to_folder_and_channel(session, clip)
+            session.commit()
             if channel is None:
                 raise HTTPException(
                     status_code=404,
                     detail="No linked channel found to store framing preset",
                 )
-
-            channel.preset_layout_mode = clip.layout_mode
-            channel.preset_split_ratio = clip.split_ratio
-            channel.preset_webcam_json = clip.webcam_box_json
-            channel.preset_gameplay_json = clip.gameplay_box_json
-            session.add(channel)
-            session.commit()
             session.refresh(channel)
             return ChannelRead.from_orm_row(channel)
 

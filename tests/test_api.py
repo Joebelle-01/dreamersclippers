@@ -266,6 +266,7 @@ class TestClipWorkflowApi:
         _synthesize_test_mp4(settings.ffmpeg_path, raw_clip_path, duration_sec=2.0)
 
         clip_id = "clip-e2e-test-001"
+        sibling_id = "clip-e2e-test-002"
         with app.state.session_factory() as session:
             clip = ClipItem(
                 id=clip_id,
@@ -282,7 +283,23 @@ class TestClipWorkflowApi:
                 trim_start_sec=0.0,
                 trim_end_sec=2.0,
             )
+            sibling = ClipItem(
+                id=sibling_id,
+                channel_id=channel_id,
+                channel_login="xqc_123",
+                source_type="live",
+                source_ref="live:xqc_123",
+                title="Second Clutch Moment",
+                status="pending_review",
+                hype_score=78.0,
+                trigger_reason="chat+audio burst",
+                raw_video_path=str(raw_clip_path),
+                duration_sec=2.0,
+                trim_start_sec=0.0,
+                trim_end_sec=2.0,
+            )
             session.add(clip)
+            session.add(sibling)
             session.commit()
 
         list_resp = client.get("/api/clips", params={"status": "pending_review"})
@@ -320,6 +337,14 @@ class TestClipWorkflowApi:
         assert patched["layout_mode"] == "split_top_cam"
         assert patched["split_ratio"] == pytest.approx(0.40)
         assert patched["webcam_box"]["x"] == pytest.approx(0.02)
+
+        # Sibling pending clip in the same folder automatically receives the aligned webcam/gameplay framing
+        sibling_after = client.get(f"/api/clips/{sibling_id}").json()
+        assert sibling_after["layout_mode"] == "split_top_cam"
+        assert sibling_after["split_ratio"] == pytest.approx(0.40)
+        assert sibling_after["webcam_box"]["x"] == pytest.approx(0.02)
+        assert sibling_after["webcam_box"]["w"] == pytest.approx(0.24)
+        assert sibling_after["gameplay_box"]["w"] == pytest.approx(0.56)
 
         bad_patch = client.patch(
             f"/api/clips/{clip_id}",

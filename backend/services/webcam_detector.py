@@ -19,6 +19,7 @@ from backend.security import CropBox
 logger = logging.getLogger(__name__)
 
 _HAAR_FILENAME = "haarcascade_frontalface_default.xml"
+_HAAR_PROFILE_FILENAME = "haarcascade_profileface.xml"
 _CONFIDENCE_THRESHOLD = 0.55
 _DEFAULT_GAMEPLAY_WITH_CAM = CropBox(x=0.22, y=0.0, w=0.56, h=1.0)
 _DEFAULT_GAMEPLAY_NO_CAM = CropBox(x=0.0, y=0.0, w=1.0, h=1.0)
@@ -77,6 +78,14 @@ def _load_face_cascade() -> cv2.CascadeClassifier:
     if cascade.empty():
         raise RuntimeError(f"Failed to load OpenCV Haar cascade from '{cascade_path}'")
     return cascade
+
+
+def _load_profile_cascade() -> cv2.CascadeClassifier | None:
+    cascade_path = Path(cv2.data.haarcascades) / _HAAR_PROFILE_FILENAME
+    if not cascade_path.is_file():
+        return None
+    cascade = cv2.CascadeClassifier(str(cascade_path))
+    return None if cascade.empty() else cascade
 
 
 def _probe_duration_sec(video_path: Path, ffmpeg_path: str) -> float:
@@ -224,6 +233,7 @@ def _webcam_zone_weight(cx: float, cy: float) -> float:
 def _detect_faces_per_frame(
     grays: list[np.ndarray],
     cascade: cv2.CascadeClassifier,
+    profile_cascade: cv2.CascadeClassifier | None = None,
 ) -> list[_FaceDetection]:
     detections: list[_FaceDetection] = []
     for idx, gray in enumerate(grays):
@@ -239,10 +249,36 @@ def _detect_faces_per_frame(
             minSize=(min_dim, min_dim),
             maxSize=(max_w, max_h),
         )
-        if len(faces) == 0:
-            continue
+        frame_boxes: list[tuple[int, int, int, int]] = (
+            [(int(fx), int(fy), int(fw), int(fh)) for fx, fy, fw, fh in faces]
+            if len(faces) > 0
+            else []
+        )
 
-        for fx, fy, fw, fh in faces:
+        # Fallback for 3/4-profile streamers looking toward a second monitor
+        if not frame_boxes and profile_cascade is not None:
+            prof_left = profile_cascade.detectMultiScale(
+                gray,
+                scaleFactor=1.1,
+                minNeighbors=4,
+                minSize=(min_dim, min_dim),
+                maxSize=(max_w, max_h),
+            )
+            for fx, fy, fw, fh in prof_left:
+                frame_boxes.append((int(fx), int(fy), int(fw), int(fh)))
+            if not frame_boxes:
+                flipped = cv2.flip(gray, 1)
+                prof_right = profile_cascade.detectMultiScale(
+                    flipped,
+                    scaleFactor=1.1,
+                    minNeighbors=4,
+                    minSize=(min_dim, min_dim),
+                    maxSize=(max_w, max_h),
+                )
+                for fx, fy, fw, fh in prof_right:
+                    frame_boxes.append((int(width - fx - fw), int(fy), int(fw), int(fh)))
+
+        for fx, fy, fw, fh in frame_boxes:
             w_norm = float(fw) / float(width)
             h_norm = float(fh) / float(height)
             # Filter tiny noisy fragments or implausible aspect boxes
@@ -435,7 +471,36 @@ def _refine_webcam_bounds(
     if y1 - y0 < int(0.08 * height):
         y0, y1 = ergo_y0, ergo_y1
 
+    # Corner-cam snapping: when a streamer sits slightly off-center inside a corner webcam
+    # (e.g., top-left cam where face cx is ~0.14..0.22), snap the outer edge flush to the
+    # screen border and enforce an ergonomic corner webcam span so the box covers the full cam.
+    if cluster.median_cx <= 0.26 and x0 <= int(0.09 * width):
+        x0 = 0
+        x1 = max(x1, int(round(max(0.22 * width, mcx + 1.55 * mfw))))
+    elif cluster.median_cx >= 0.74 and x1 >= int(0.91 * width):
+        x1 = width
+        x0 = min(x0, int(round(min(0.78 * width, mcx - 1.55 * mfw))))
+
+    if cluster.median_cy <= 0.30 and y0 <= int(0.09 * height):
+        y0 = 0
+        y1 = max(y1, int(round(max(0.26 * height, mcy + 2.05 * mfh))))
+    elif cluster.median_cy >= 0.70 and y1 >= int(0.91 * height):
+        y1 = height
+        y0 = min(y0, int(round(min(0.74 * height, mcy - 1.05 * mfh))))
+
     return _to_clamped_crop_box(x0 / width, y0 / height, x1 / width, y1 / height), border_hits
+
+
+def _build_gameplay_box_for_webcam(webcam_box: CropBox) -> CropBox:
+    """Position the default gameplay box so it does not collide with a side/corner webcam."""
+    gp_w = 0.56
+    if webcam_box.x <= 0.08 and (webcam_box.x + webcam_box.w) > 0.22:
+        gp_x = min(0.42, round(webcam_box.x + webcam_box.w, 4))
+        return CropBox(x=gp_x, y=0.0, w=min(gp_w, round(1.0 - gp_x, 4)), h=1.0)
+    if webcam_box.x >= 0.65 and webcam_box.x < 0.78:
+        gp_x = max(0.04, round(webcam_box.x - gp_w, 4))
+        return CropBox(x=gp_x, y=0.0, w=gp_w, h=1.0)
+    return _DEFAULT_GAMEPLAY_WITH_CAM
 
 
 def _to_clamped_crop_box(x0: float, y0: float, x1: float, y1: float) -> CropBox:
@@ -483,7 +548,8 @@ def detect_webcam(video_path: Path, ffmpeg_path: str) -> WebcamDetectionResult:
     ]
 
     cascade = _load_face_cascade()
-    detections = _detect_faces_per_frame(grays, cascade)
+    profile_cascade = _load_profile_cascade()
+    detections = _detect_faces_per_frame(grays, cascade, profile_cascade)
     if not detections:
         return WebcamDetectionResult(
             found=False,
@@ -536,6 +602,6 @@ def detect_webcam(video_path: Path, ffmpeg_path: str) -> WebcamDetectionResult:
         found=True,
         confidence=best_confidence,
         webcam_box=best_result[1],
-        gameplay_box=_DEFAULT_GAMEPLAY_WITH_CAM,
+        gameplay_box=_build_gameplay_box_for_webcam(best_result[1]),
         layout_mode="split_top_cam",
     )

@@ -347,7 +347,33 @@ export function App() {
 
   const handleUpdateClip = async (clipId: string, payload: ClipUpdateInput) => {
     const updated = await updateClip(clipId, payload)
-    setClips((prev) => prev.map((c) => (c.id === clipId ? updated : c)))
+    const syncFraming =
+      payload.webcam_box !== undefined ||
+      payload.gameplay_box !== undefined ||
+      payload.layout_mode !== undefined ||
+      payload.split_ratio !== undefined
+    const targetFolderKey = getClipFolderKey(updated)
+    setClips((prev) =>
+      prev.map((c) => {
+        if (c.id === clipId) return updated
+        if (
+          syncFraming &&
+          c.status === 'pending_review' &&
+          getClipFolderKey(c) === targetFolderKey
+        ) {
+          return {
+            ...c,
+            layout_mode: updated.layout_mode,
+            split_ratio: updated.split_ratio,
+            webcam_box: updated.webcam_box,
+            webcam_box_json: updated.webcam_box_json,
+            gameplay_box: updated.gameplay_box,
+            gameplay_box_json: updated.gameplay_box_json,
+          }
+        }
+        return c
+      }),
+    )
     return updated
   }
 
@@ -362,6 +388,7 @@ export function App() {
     setChannels((prev) =>
       prev.map((ch) => (ch.id === updatedChannel.id ? updatedChannel : ch)),
     )
+    void loadClips()
   }
 
   const handleRenderClip = async (clipId: string) => {
