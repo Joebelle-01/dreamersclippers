@@ -869,16 +869,182 @@ _ASS_STYLE_PREFIXES: dict[str, str] = {
 }
 
 
+_HOOK_PILL_COLORS: dict[str, tuple[str, str, str]] = {
+    # style_id -> (ASS BGR fill, ASS fill alpha, ASS BGR text color)
+    "tiktok_white": ("&H00FFFFFF&", "&H05&", "&H0014100E&"),
+    "dark_glass": ("&H001A120E&", "&H1E&", "&H00F8FAFC&"),
+    "viral_gold": ("&H0015CCFA&", "&H05&", "&H00110E0B&"),
+    "studio_violet": ("&H00FC5C7C&", "&H08&", "&H00FFFFFF&"),
+}
+
+_EXAGGERATED_HOOK_TEMPLATES: tuple[str, ...] = (
+    "Wait for {actor}'s reaction at the end",
+    "Bro really couldn't believe what just happened",
+    "Nobody expected THIS to happen live on stream",
+    "POV: Everything goes sideways in 5 seconds",
+    "Chat completely lost it when {actor} saw this",
+    "You couldn't script a crazier moment than this",
+)
+
+
+def generate_hook_headline(
+    streamer: str,
+    title: str,
+    captions: list[CaptionSegment] | None = None,
+    *,
+    mode: str = "context",
+    variant: int = 0,
+) -> str:
+    """Build either a factual context hook or an exaggerated viral TikTok headline."""
+    clean_actor = sanitize_ass_text(streamer or "streamer").lstrip("@").strip() or "streamer"
+    if mode == "exaggerated":
+        tpl = _EXAGGERATED_HOOK_TEMPLATES[abs(int(variant)) % len(_EXAGGERATED_HOOK_TEMPLATES)]
+        return tpl.format(actor=f"@{clean_actor}")[:76]
+
+    if captions:
+        spoken = sanitize_ass_text(" ".join(seg.text for seg in captions[:2])).strip()
+        if len(spoken) >= 14:
+            words = spoken.split()[:11]
+            snippet = " ".join(words).rstrip(",;:")
+            if snippet:
+                return f"@{clean_actor}: \"{snippet}\""[:76]
+
+    raw_title = sanitize_ass_text(title or "").strip()
+    for noisy in ("Auto Hype", "Manual Clip", "— Viral #"):
+        if noisy in raw_title:
+            raw_title = ""
+            break
+    if raw_title and len(raw_title) >= 8:
+        return raw_title[:76]
+    return f"Watch what just happened on @{clean_actor}'s stream"[:76]
+
+
+def _wrap_hook_lines(text: str, *, max_chars: int = 30, max_lines: int = 2) -> list[str]:
+    """Wrap hook banner copy into 1-2 balanced short lines for a TikTok center pill."""
+    cleaned = sanitize_ass_text(text)[:84]
+    if not cleaned:
+        return []
+    words = cleaned.split()
+    if len(cleaned) <= max_chars or max_lines <= 1:
+        return [cleaned]
+
+    lines: list[str] = []
+    curr = ""
+    for word in words:
+        cand = f"{curr} {word}".strip() if curr else word
+        if len(cand) > max_chars and curr:
+            lines.append(curr)
+            if len(lines) >= max_lines - 1:
+                curr = word
+            else:
+                curr = word
+        else:
+            curr = cand
+    if curr:
+        if len(lines) >= max_lines:
+            lines[-1] = f"{lines[-1]} {curr}"[: max_chars + 10]
+        else:
+            lines.append(curr)
+    return lines[:max_lines]
+
+
+def _build_rounded_rect_ass_path(width: int, height: int, radius: int) -> str:
+    """Return an ASS \\p1 cubic-Bezier rounded rectangle path from (0,0) to (width,height)."""
+    w = max(40, int(width))
+    h = max(32, int(height))
+    r = max(4, min(int(radius), w // 2 - 2, h // 2 - 2))
+    k = int(round(r * 0.552))
+    return (
+        f"m {r} 0 "
+        f"l {w - r} 0 "
+        f"b {w - r + k} 0 {w} {r - k} {w} {r} "
+        f"l {w} {h - r} "
+        f"b {w} {h - r + k} {w - r + k} {h} {w - r} {h} "
+        f"l {r} {h} "
+        f"b {r - k} {h} 0 {h - r + k} 0 {h - r} "
+        f"l 0 {r} "
+        f"b 0 {r - k} {r - k} 0 {r} 0"
+    )
+
+
+def _build_hook_banner_ass_events(
+    hook_text: str,
+    *,
+    layout_mode: str,
+    split_ratio: float,
+    hook_style: str,
+    hook_duration_mode: str,
+    clip_duration_sec: float,
+) -> tuple[list[str], list[str]]:
+    """Build ASS styles and vector-pill + text Dialogue lines for the Center Hook Banner."""
+    lines = _wrap_hook_lines(hook_text, max_chars=30, max_lines=2)
+    if not lines:
+        return [], []
+
+    clamped_ratio = max(0.25, min(0.55, float(split_ratio)))
+    center_y = int(round(1920 * clamped_ratio)) if layout_mode == "split_top_cam" else 880
+    end_sec = (
+        min(max(0.5, float(clip_duration_sec)), 5.0)
+        if hook_duration_mode == "intro_5s"
+        else max(0.5, float(clip_duration_sec))
+    )
+
+    fill_bgr, fill_alpha, ink_bgr = _HOOK_PILL_COLORS.get(
+        hook_style, _HOOK_PILL_COLORS["tiktok_white"]
+    )
+    font_size = 46
+    line_h = 56
+    max_line_chars = max(len(line) for line in lines)
+    pill_w = min(960, max(340, int(round(max_line_chars * (font_size * 0.55) + 76))))
+    pill_h = int(len(lines) * line_h + 36)
+    box_x = int(round(540 - pill_w / 2))
+    box_y = int(round(center_y - pill_h / 2))
+    path = _build_rounded_rect_ass_path(pill_w, pill_h, radius=22)
+
+    styles = [
+        (
+            f"Style: HookPill,Arial,20,{fill_bgr},{fill_bgr},&H00000000&,&H88000000&,"
+            "0,0,0,0,100,100,0,0,1,0,3,7,0,0,0,1"
+        ),
+        (
+            f"Style: HookText,Arial,{font_size},{ink_bgr},{ink_bgr},&H00000000&,&H00000000&,"
+            "-1,0,0,0,100,100,0,0,1,0,0,5,40,40,20,1"
+        ),
+    ]
+
+    t_end = _format_ass_time(end_sec)
+    joined_text = "\\N".join(lines)
+    events = [
+        (
+            f"Dialogue: 1,0:00:00.00,{t_end},HookPill,,0,0,0,,"
+            f"{{\\an7\\pos({box_x},{box_y})\\1a{fill_alpha}\\p1}}{path}{{\\p0}}"
+        ),
+        (
+            f"Dialogue: 2,0:00:00.00,{t_end},HookText,,0,0,0,,"
+            f"{{\\an5\\pos(540,{center_y})}}{joined_text}"
+        ),
+    ]
+    return styles, events
+
+
 def build_ass_subtitles(
     segments: list[CaptionSegment],
     layout_mode: str = "split_top_cam",
     split_ratio: float = 0.35,
     caption_style: str = "bold_pop",
     caption_position: str = "seam",
+    *,
+    hook_text: str | None = None,
+    hook_style: str = "tiktok_white",
+    hook_duration_mode: str = "full",
+    clip_duration_sec: float = 60.0,
 ) -> str:
-    """Build a 1080x1920 ASS subtitle document styled for seam or lower-safe placement."""
+    """Build a 1080x1920 ASS subtitle document with optional Center Hook Pill + CC."""
     clamped_ratio = max(0.25, min(0.55, float(split_ratio)))
-    use_seam = caption_position == "seam" and layout_mode == "split_top_cam"
+    has_hook = bool(hook_text and sanitize_ass_text(hook_text))
+    # Prevent collision: when Center Hook Banner occupies the seam, place CC in lower_safe
+    effective_cc_pos = "lower_safe" if has_hook else caption_position
+    use_seam = effective_cc_pos == "seam" and layout_mode == "split_top_cam"
     if use_seam:
         seam_y = int(round(1920 * clamped_ratio))
         alignment = 5
@@ -893,6 +1059,18 @@ def build_ass_subtitles(
 
     style_prefix = _ASS_STYLE_PREFIXES.get(caption_style, _ASS_STYLE_PREFIXES["bold_pop"])
     style_line = f"{style_prefix},{alignment},64,64,{margin_v},1"
+
+    hook_styles: list[str] = []
+    hook_events: list[str] = []
+    if has_hook and hook_text is not None:
+        hook_styles, hook_events = _build_hook_banner_ass_events(
+            hook_text,
+            layout_mode=layout_mode,
+            split_ratio=clamped_ratio,
+            hook_style=hook_style,
+            hook_duration_mode=hook_duration_mode,
+            clip_duration_sec=clip_duration_sec,
+        )
 
     header = "\n".join(
         [
@@ -911,13 +1089,14 @@ def build_ass_subtitles(
                 "MarginL, MarginR, MarginV, Encoding"
             ),
             style_line,
+            *hook_styles,
             "",
             "[Events]",
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
         ]
     )
 
-    events: list[str] = []
+    events: list[str] = list(hook_events)
     for seg in segments:
         clean_phrase = sanitize_ass_text(seg.text)
         if not clean_phrase:

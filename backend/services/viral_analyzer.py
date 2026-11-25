@@ -29,6 +29,7 @@ from backend.security import (
     validate_video_url,
 )
 from backend.services.caption_service import (
+    generate_hook_headline,
     sanitize_ass_text,
     slice_captions_for_window,
     transcribe_clip,
@@ -904,13 +905,20 @@ async def analyze_local_video(
                 if clip_start <= ts <= clip_end
             ][:15]
 
+            cand_title = str(cand["title"])
+            default_hook = generate_hook_headline(
+                channel_login,
+                cand_title,
+                clip_captions,
+                mode="context",
+            )
             clip_row = ClipItem(
                 id=clip_id,
                 channel_id=int(channel_ctx["channel_id"]),
                 channel_login=channel_login,
                 source_type=source_type,
                 source_ref=source_ref or source_label,
-                title=str(cand["title"]),
+                title=cand_title,
                 status="pending_review",
                 hype_score=float(cand["viral_score"]),
                 trigger_reason=str(cand["reason"]),
@@ -928,7 +936,12 @@ async def analyze_local_video(
                 webcam_confidence=webcam_conf,
                 normalize_audio=True,
                 captions_enabled=True,
+                caption_position="lower_safe",
                 captions_json=json.dumps(captions_payload),
+                hook_enabled=True,
+                hook_text=default_hook,
+                hook_style="tiktok_white",
+                hook_duration_mode="full",
             )
 
             with session_factory() as session:
@@ -1742,6 +1755,12 @@ async def analyze_video_url(
                 if clip_start <= ts <= clip_end
             ][:15]
 
+            default_hook = generate_hook_headline(
+                channel_login,
+                clip_title,
+                clip_captions,
+                mode="context",
+            )
             clip_row = ClipItem(
                 id=clip_id,
                 channel_id=int(channel_ctx["channel_id"]),
@@ -1766,7 +1785,12 @@ async def analyze_video_url(
                 webcam_confidence=webcam_conf,
                 normalize_audio=True,
                 captions_enabled=True,
+                caption_position="lower_safe",
                 captions_json=json.dumps(captions_payload),
+                hook_enabled=True,
+                hook_text=default_hook,
+                hook_style="tiktok_white",
+                hook_duration_mode="full",
             )
 
             with session_factory() as session:

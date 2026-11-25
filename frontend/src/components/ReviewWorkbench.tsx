@@ -49,6 +49,8 @@ import type {
   ClipStatus,
   ClipUpdateInput,
   CropBox,
+  HookDurationMode,
+  HookStyle,
   LayoutMode,
   ThumbnailRequest,
 } from '../types'
@@ -119,6 +121,67 @@ function formatSourceBadge(sourceType: string): string {
   return 'Live'
 }
 
+function cleanHookSourceTitle(rawTitle: string, login: string): string {
+  const cleaned = rawTitle
+    .replace(/\b(viral\s*moment|hype\s*spike|clip\s*#?\d+|cut\s*\d+)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (cleaned.length >= 6 && cleaned.toLowerCase() !== login.toLowerCase()) {
+    return cleaned.slice(0, 62)
+  }
+  return ''
+}
+
+function buildContextHookText(clip: ClipItem, captions: CaptionSegment[]): string {
+  const login = (clip.channel_login || 'streamer').replace(/^@+/, '')
+  const spoken = captions
+    .slice(0, 2)
+    .map((c) => c.text.trim())
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (spoken.length >= 8) {
+    const trimmed = spoken.length > 52 ? `${spoken.slice(0, 49).trimEnd()}...` : spoken
+    return `@${login}: "${trimmed}"`
+  }
+  const cleanTitle = cleanHookSourceTitle(clip.title, login)
+  if (cleanTitle) {
+    return cleanTitle
+  }
+  return `@${login} reacts live to this moment 👀`
+}
+
+function buildExaggeratedHookText(
+  clip: ClipItem,
+  captions: CaptionSegment[],
+  variant: number,
+): string {
+  const login = (clip.channel_login || 'streamer').replace(/^@+/, '')
+  const firstLine = captions[0]?.text?.trim() ?? ''
+  const shortQuote =
+    firstLine.length >= 6
+      ? firstLine.length > 32
+        ? `${firstLine.slice(0, 29).trimEnd()}...`
+        : firstLine
+      : ''
+
+  const templates = [
+    `Wait for @${login}'s reaction at the end 😭🔥`,
+    `Bro really couldn't believe what just happened 💀🔥`,
+    shortQuote
+      ? `"${shortQuote}" — nobody saw THIS coming 🤯🔥`
+      : `Nobody expected THIS to happen on stream 🤯🔥`,
+    `POV: Everything goes sideways in 5 seconds 😭💀`,
+    `Chat lost their minds when @${login} did this 🔥👀`,
+    `This might be the wildest clip of the week 🤯💀`,
+    `Watch @${login}'s face the second it happens 😭🔥`,
+    `0% chance anyone recovers from this moment 💀🔥`,
+  ]
+  return templates[Math.abs(variant) % templates.length]
+}
+
 export function ReviewWorkbench({
   clips,
   clipFolders,
@@ -182,6 +245,11 @@ export function ReviewWorkbench({
   const [trimStart, setTrimStart] = useState<number>(0)
   const [trimEnd, setTrimEnd] = useState<number>(10)
   const [normalizeAudio, setNormalizeAudio] = useState<boolean>(true)
+  const [hookEnabled, setHookEnabled] = useState<boolean>(false)
+  const [hookText, setHookText] = useState<string>('')
+  const [hookStyle, setHookStyle] = useState<HookStyle>('tiktok_white')
+  const [hookDurationMode, setHookDurationMode] = useState<HookDurationMode>('full')
+  const [hookVariantIdx, setHookVariantIdx] = useState<number>(0)
   const [captionsEnabled, setCaptionsEnabled] = useState<boolean>(true)
   const [streamerVoiceOnly, setStreamerVoiceOnly] = useState<boolean>(true)
   const [captionStyle, setCaptionStyle] = useState<CaptionStyle>('bold_pop')
@@ -239,6 +307,13 @@ export function ReviewWorkbench({
     setTrimStart(start)
     setTrimEnd(end)
     setNormalizeAudio(selectedClip.normalize_audio)
+    setHookEnabled(Boolean(selectedClip.hook_enabled))
+    setHookText(selectedClip.hook_text ?? '')
+    const hs = selectedClip.hook_style
+    setHookStyle(
+      hs === 'dark_glass' || hs === 'viral_gold' || hs === 'studio_violet' ? hs : 'tiktok_white',
+    )
+    setHookDurationMode(selectedClip.hook_duration_mode === 'intro_5s' ? 'intro_5s' : 'full')
     setCaptionsEnabled(selectedClip.captions_enabled ?? true)
     const st = selectedClip.caption_style
     setCaptionStyle(st === 'clean_box' || st === 'classic_cc' ? st : 'bold_pop')
@@ -279,6 +354,79 @@ export function ReviewWorkbench({
     const inkColor = styles.getPropertyValue('--color-ink').trim() || bodyStyle.color
     const accentColor = styles.getPropertyValue('--color-accent').trim() || inkColor
 
+    const drawHookBanner = (seamY?: number) => {
+      const trimmedHook = hookText.trim()
+      if (!hookEnabled || previewExported || !trimmedHook) return
+      const relTime = Math.max(0, currentTime - trimStart)
+      if (hookDurationMode === 'intro_5s' && relTime > 5.0) return
+
+      ctx.save()
+      const fontSize = 12.5
+      ctx.font = `700 ${fontSize}px "Plus Jakarta Sans", "Segoe UI Emoji", sans-serif`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+
+      const words = trimmedHook.split(/\s+/)
+      const rawLines: string[] = []
+      let cur = ''
+      const maxLinePx = cw - 42
+      for (const word of words) {
+        const next = cur ? `${cur} ${word}` : word
+        if (ctx.measureText(next).width > maxLinePx && cur) {
+          rawLines.push(cur)
+          cur = word
+        } else {
+          cur = next
+        }
+      }
+      if (cur) rawLines.push(cur)
+      const lines = rawLines.slice(0, 2)
+      if (rawLines.length > 2 && lines[1]) {
+        lines[1] = `${lines[1].slice(0, Math.max(8, lines[1].length - 3)).trimEnd()}...`
+      }
+
+      const lineHeight = 16
+      const maxMeasured = Math.max(...lines.map((l) => ctx.measureText(l).width), 60)
+      const pillW = Math.min(cw - 18, Math.max(96, Math.round(maxMeasured + 22)))
+      const pillH = lines.length * lineHeight + 11
+      const centerX = cw / 2
+      const centerY =
+        layoutMode === 'split_top_cam' && seamY != null ? seamY : Math.round(ch * 0.46)
+      const pillX = Math.round(centerX - pillW / 2)
+      const pillY = Math.round(centerY - pillH / 2)
+
+      let fill = '#ffffff'
+      let textFill = '#0f1115'
+      if (hookStyle === 'dark_glass') {
+        fill = 'rgba(14, 18, 26, 0.92)'
+        textFill = '#f8fafc'
+      } else if (hookStyle === 'viral_gold') {
+        fill = '#facc15'
+        textFill = '#0f1115'
+      } else if (hookStyle === 'studio_violet') {
+        fill = '#7c5cfc'
+        textFill = '#ffffff'
+      }
+
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.42)'
+      ctx.shadowBlur = 8
+      ctx.shadowOffsetY = 2
+      ctx.fillStyle = fill
+      ctx.beginPath()
+      ctx.roundRect(pillX, pillY, pillW, pillH, 7)
+      ctx.fill()
+
+      ctx.shadowColor = 'transparent'
+      ctx.shadowBlur = 0
+      ctx.shadowOffsetY = 0
+      ctx.fillStyle = textFill
+      const startY = centerY - ((lines.length - 1) * lineHeight) / 2
+      lines.forEach((line, idx) => {
+        ctx.fillText(line, centerX, startY + idx * lineHeight)
+      })
+      ctx.restore()
+    }
+
     const drawLiveCaptions = (seamY?: number) => {
       if (!captionsEnabled || previewExported || captionsDraft.length === 0) return
       const relTime = Math.max(0, currentTime - trimStart)
@@ -287,9 +435,13 @@ export function ReviewWorkbench({
       )
       if (!activeSeg || !activeSeg.text.trim()) return
 
+      const hookOccupiesSeam = hookEnabled && hookText.trim().length > 0
       const centerX = cw / 2
       const baseY =
-        captionPosition === 'seam' && layoutMode === 'split_top_cam' && seamY != null
+        !hookOccupiesSeam &&
+        captionPosition === 'seam' &&
+        layoutMode === 'split_top_cam' &&
+        seamY != null
           ? seamY
           : layoutMode === 'split_top_cam'
             ? Math.round(ch * 0.78)
@@ -430,6 +582,7 @@ export function ReviewWorkbench({
       const dx = (cw - dw) / 2
       const dy = (ch - dh) / 2
       ctx.drawImage(video, sx, sy, sw, sh, dx, dy, dw, dh)
+      drawHookBanner()
       drawLiveCaptions()
       return
     }
@@ -446,6 +599,7 @@ export function ReviewWorkbench({
     ctx.lineTo(cw, camH + 0.5)
     ctx.stroke()
 
+    drawHookBanner(camH)
     drawLiveCaptions(camH)
   }, [
     captionPosition,
@@ -454,6 +608,10 @@ export function ReviewWorkbench({
     captionsEnabled,
     currentTime,
     gameplayBox,
+    hookDurationMode,
+    hookEnabled,
+    hookStyle,
+    hookText,
     layoutMode,
     previewExported,
     splitRatio,
@@ -929,6 +1087,10 @@ export function ReviewWorkbench({
         webcam_box: layoutMode === 'split_top_cam' ? webcamBox : null,
         gameplay_box: gameplayBox,
         normalize_audio: normalizeAudio,
+        hook_enabled: hookEnabled,
+        hook_text: hookText.trim(),
+        hook_style: hookStyle,
+        hook_duration_mode: hookDurationMode,
         captions_enabled: captionsEnabled,
         caption_style: captionStyle,
         caption_position: captionPosition,
@@ -1784,6 +1946,164 @@ export function ReviewWorkbench({
                       className="w-4 h-4 accent-accent rounded"
                     />
                   </label>
+
+                  {/* Center Hook Banner (TikTok Viral Context / Exaggerated Headline Pill) */}
+                  <div className="w-full flex flex-col gap-2.5 pb-2.5 border-b border-rule">
+                    <label className="w-full flex items-center justify-between gap-2 cursor-pointer">
+                      <span className="flex items-center gap-2 text-xs font-medium text-ink-2">
+                        <Sparkles size={14} className="text-accent" aria-hidden="true" />
+                        <span>Center Hook Banner (TikTok Pill)</span>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={hookEnabled}
+                        onChange={(e) => {
+                          const val = e.target.checked
+                          const nextText =
+                            val && !hookText.trim()
+                              ? buildContextHookText(selectedClip, captionsDraft)
+                              : hookText
+                          setHookEnabled(val)
+                          if (nextText !== hookText) setHookText(nextText)
+                          if (previewExported) setPreviewExported(false)
+                          void commitCropPatch({
+                            hook_enabled: val,
+                            hook_text: nextText.trim(),
+                            sync_folder: false,
+                          })
+                        }}
+                        className="w-4 h-4 accent-accent rounded"
+                      />
+                    </label>
+
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const generated = buildContextHookText(selectedClip, captionsDraft)
+                          setHookEnabled(true)
+                          setHookText(generated)
+                          if (previewExported) setPreviewExported(false)
+                          void commitCropPatch({
+                            hook_enabled: true,
+                            hook_text: generated,
+                            sync_folder: false,
+                          })
+                        }}
+                        title="Generate a context headline explaining what is happening in this clip"
+                        className="btn btn--compact btn--quiet !text-[11px]"
+                      >
+                        <Sparkles size={12} className="text-accent" aria-hidden="true" />
+                        <span>Auto Context</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextIdx = hookVariantIdx + 1
+                          setHookVariantIdx(nextIdx)
+                          const generated = buildExaggeratedHookText(
+                            selectedClip,
+                            captionsDraft,
+                            nextIdx,
+                          )
+                          setHookEnabled(true)
+                          setHookText(generated)
+                          if (previewExported) setPreviewExported(false)
+                          void commitCropPatch({
+                            hook_enabled: true,
+                            hook_text: generated,
+                            sync_folder: false,
+                          })
+                        }}
+                        title="Cycle punchy viral reaction hooks with emojis"
+                        className="btn btn--compact btn--accent-outline !text-[11px]"
+                      >
+                        <span>Exaggerate 🔥</span>
+                      </button>
+                    </div>
+
+                    {hookEnabled && (
+                      <>
+                        <input
+                          type="text"
+                          aria-label="Center hook banner text"
+                          maxLength={120}
+                          value={hookText}
+                          placeholder="Type context or viral hook (e.g. Wait for the ending 😭🔥)"
+                          onChange={(e) => {
+                            if (previewExported) setPreviewExported(false)
+                            setHookText(e.target.value)
+                          }}
+                          onBlur={() =>
+                            void commitCropPatch({
+                              hook_enabled: hookEnabled,
+                              hook_text: hookText.trim(),
+                              sync_folder: false,
+                            })
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.currentTarget.blur()
+                            }
+                          }}
+                          className="field-input !min-h-[34px] text-xs"
+                        />
+
+                        <div className="seg-group grid-cols-4 w-full" role="group" aria-label="Hook pill color">
+                          {(
+                            [
+                              ['tiktok_white', 'White'],
+                              ['dark_glass', 'Dark'],
+                              ['viral_gold', 'Gold'],
+                              ['studio_violet', 'Violet'],
+                            ] as const
+                          ).map(([styleKey, label]) => (
+                            <button
+                              key={styleKey}
+                              type="button"
+                              aria-pressed={hookStyle === styleKey}
+                              onClick={() => {
+                                if (previewExported) setPreviewExported(false)
+                                setHookStyle(styleKey)
+                                void commitCropPatch({ hook_style: styleKey, sync_folder: false })
+                              }}
+                              className="seg-cell"
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="seg-group grid-cols-2 w-full" role="group" aria-label="Hook banner duration">
+                          <button
+                            type="button"
+                            aria-pressed={hookDurationMode === 'full'}
+                            onClick={() => {
+                              if (previewExported) setPreviewExported(false)
+                              setHookDurationMode('full')
+                              void commitCropPatch({ hook_duration_mode: 'full', sync_folder: false })
+                            }}
+                            className="seg-cell"
+                          >
+                            Full Clip
+                          </button>
+                          <button
+                            type="button"
+                            aria-pressed={hookDurationMode === 'intro_5s'}
+                            onClick={() => {
+                              if (previewExported) setPreviewExported(false)
+                              setHookDurationMode('intro_5s')
+                              void commitCropPatch({ hook_duration_mode: 'intro_5s', sync_folder: false })
+                            }}
+                            className="seg-cell"
+                          >
+                            First 5s Intro
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
 
                   {/* Closed Captions (CC) Full Editor */}
                   <div className="w-full flex flex-col gap-2.5 pb-2.5 border-b border-rule">

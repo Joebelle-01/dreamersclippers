@@ -108,6 +108,10 @@ class ClipItem(SQLModel, table=True):
     export_thumb_path: str | None = Field(default=None)
     thumb_time_sec: float | None = Field(default=None)
     thumb_title_overlay: bool = Field(default=False)
+    hook_enabled: bool = Field(default=False)
+    hook_text: str = Field(default="")
+    hook_style: str = Field(default="tiktok_white")
+    hook_duration_mode: str = Field(default="full")
     encoder_used: str | None = Field(default=None)
     error_message: str | None = Field(default=None)
     captured_at: datetime = Field(default_factory=utc_now, index=True)
@@ -131,6 +135,8 @@ LayoutMode = Literal["split_top_cam", "blur_no_cam"]
 ClipStatus = Literal["pending_review", "rendering", "exported", "discarded", "failed"]
 CaptionStyle = Literal["bold_pop", "clean_box", "classic_cc"]
 CaptionPosition = Literal["seam", "lower_safe"]
+HookStyle = Literal["tiktok_white", "dark_glass", "viral_gold", "studio_violet"]
+HookDurationMode = Literal["full", "intro_5s"]
 
 
 class CaptionWord(BaseModel):
@@ -281,6 +287,10 @@ class ClipUpdate(BaseModel):
     captions_json: str | None = None
     thumb_time_sec: float | None = PydanticField(default=None, ge=0.0)
     thumb_title_overlay: bool | None = None
+    hook_enabled: bool | None = None
+    hook_text: str | None = None
+    hook_style: HookStyle | None = None
+    hook_duration_mode: HookDurationMode | None = None
     webcam_box: CropBox | dict[str, Any] | None = None
     gameplay_box: CropBox | dict[str, Any] | None = None
     webcam_box_json: str | None = None
@@ -327,6 +337,10 @@ class ClipRead(BaseModel):
     export_thumb_path: str | None = None
     thumb_time_sec: float | None = None
     thumb_title_overlay: bool = False
+    hook_enabled: bool = False
+    hook_text: str = ""
+    hook_style: str = "tiktok_white"
+    hook_duration_mode: str = "full"
     encoder_used: str | None
     error_message: str | None
     captured_at: datetime
@@ -372,6 +386,10 @@ class ClipRead(BaseModel):
             export_thumb_path=row.export_thumb_path,
             thumb_time_sec=row.thumb_time_sec,
             thumb_title_overlay=bool(row.thumb_title_overlay),
+            hook_enabled=bool(getattr(row, "hook_enabled", False)),
+            hook_text=str(getattr(row, "hook_text", "") or ""),
+            hook_style=str(getattr(row, "hook_style", "tiktok_white") or "tiktok_white"),
+            hook_duration_mode=str(getattr(row, "hook_duration_mode", "full") or "full"),
             encoder_used=row.encoder_used,
             error_message=row.error_message,
             captured_at=row.captured_at,

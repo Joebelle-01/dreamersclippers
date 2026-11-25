@@ -4,6 +4,10 @@ export type CaptionStyle = 'bold_pop' | 'clean_box' | 'classic_cc'
 
 export type CaptionPosition = 'seam' | 'lower_safe'
 
+export type HookStyle = 'tiktok_white' | 'dark_glass' | 'viral_gold' | 'studio_violet'
+
+export type HookDurationMode = 'full' | 'intro_5s'
+
 export type ClipPeriod = '24h' | '7d' | '30d'
 
 export type ClipStatus =
@@ -140,6 +144,10 @@ export interface ClipItem {
   export_thumb_path?: string | null
   thumb_time_sec?: number | null
   thumb_title_overlay?: boolean
+  hook_enabled?: boolean
+  hook_text?: string
+  hook_style?: HookStyle | string
+  hook_duration_mode?: HookDurationMode | string
   encoder_used: string | null
   error_message: string | null
   captured_at: string
@@ -172,6 +180,10 @@ export interface ClipUpdateInput {
   captions_json?: string
   thumb_time_sec?: number | null
   thumb_title_overlay?: boolean
+  hook_enabled?: boolean
+  hook_text?: string
+  hook_style?: HookStyle
+  hook_duration_mode?: HookDurationMode
   webcam_box?: CropBox | null
   gameplay_box?: CropBox | null
   sync_folder?: boolean

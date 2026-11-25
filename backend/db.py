@@ -49,6 +49,13 @@ _CLIPITEM_MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("export_thumb_path", "ALTER TABLE clipitem ADD COLUMN export_thumb_path VARCHAR"),
     ("thumb_time_sec", "ALTER TABLE clipitem ADD COLUMN thumb_time_sec FLOAT"),
     ("thumb_title_overlay", "ALTER TABLE clipitem ADD COLUMN thumb_title_overlay BOOLEAN NOT NULL DEFAULT 0"),
+    ("hook_enabled", "ALTER TABLE clipitem ADD COLUMN hook_enabled BOOLEAN NOT NULL DEFAULT 0"),
+    ("hook_text", "ALTER TABLE clipitem ADD COLUMN hook_text VARCHAR NOT NULL DEFAULT ''"),
+    ("hook_style", "ALTER TABLE clipitem ADD COLUMN hook_style VARCHAR NOT NULL DEFAULT 'tiktok_white'"),
+    (
+        "hook_duration_mode",
+        "ALTER TABLE clipitem ADD COLUMN hook_duration_mode VARCHAR NOT NULL DEFAULT 'full'",
+    ),
 )
 
 _CHANNEL_MIGRATIONS: tuple[tuple[str, str], ...] = (

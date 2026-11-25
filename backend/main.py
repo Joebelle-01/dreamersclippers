@@ -1098,6 +1098,14 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
                 clip.thumb_time_sec = payload.thumb_time_sec
             if payload.thumb_title_overlay is not None:
                 clip.thumb_title_overlay = payload.thumb_title_overlay
+            if payload.hook_enabled is not None:
+                clip.hook_enabled = payload.hook_enabled
+            if payload.hook_text is not None:
+                clip.hook_text = sanitize_chat_text(payload.hook_text, max_len=100)
+            if payload.hook_style is not None:
+                clip.hook_style = payload.hook_style
+            if payload.hook_duration_mode is not None:
+                clip.hook_duration_mode = payload.hook_duration_mode
             if has_webcam:
                 clip.webcam_box_json = webcam_json
             if has_gameplay:
@@ -1198,6 +1206,10 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
                 export_thumb_path=None,
                 thumb_time_sec=src_clip.thumb_time_sec,
                 thumb_title_overlay=src_clip.thumb_title_overlay,
+                hook_enabled=src_clip.hook_enabled,
+                hook_text=src_clip.hook_text,
+                hook_style=src_clip.hook_style,
+                hook_duration_mode=src_clip.hook_duration_mode,
             )
             session.add(dup)
             session.commit()
@@ -1542,6 +1554,10 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
             captions_json_str = str(clip.captions_json or "[]")
             thumb_time_sec = clip.thumb_time_sec
             thumb_title_overlay = bool(clip.thumb_title_overlay)
+            hook_enabled = bool(clip.hook_enabled)
+            hook_text = str(clip.hook_text or "")
+            hook_style = str(clip.hook_style or "tiktok_white")
+            hook_duration_mode = str(clip.hook_duration_mode or "full")
             clip_title = str(clip.title)
 
             clip.status = "rendering"
@@ -1560,6 +1576,7 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
                     {"clip_id": clip_id, "status": "rendering"},
                 )
 
+                segments: list[CaptionSegment] = []
                 if captions_enabled:
                     segments = _load_caption_segments(captions_json_str)
                     if not segments:
@@ -1589,22 +1606,28 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
                                     session.commit()
 
                     if segments:
-                        ass_text = build_ass_subtitles(
-                            segments,
-                            layout_mode=layout_mode,
-                            split_ratio=split_ratio,
-                            caption_style=caption_style,
-                            caption_position=clip_caption_position,
-                        )
-                        ass_temp_path.parent.mkdir(parents=True, exist_ok=True)
-                        ass_temp_path.write_text(ass_text, encoding="utf-8")
-                        ass_written = ass_temp_path
-
                         srt_text = build_srt_subtitles(segments)
                         if srt_text:
                             srt_out_path.parent.mkdir(parents=True, exist_ok=True)
                             srt_out_path.write_text(srt_text, encoding="utf-8")
                             srt_path_str = str(srt_out_path)
+
+                active_hook = hook_text.strip() if hook_enabled else ""
+                if (captions_enabled and segments) or active_hook:
+                    ass_text = build_ass_subtitles(
+                        segments if captions_enabled else [],
+                        layout_mode=layout_mode,
+                        split_ratio=split_ratio,
+                        caption_style=caption_style,
+                        caption_position=clip_caption_position,
+                        hook_text=active_hook or None,
+                        hook_style=hook_style,
+                        hook_duration_mode=hook_duration_mode,
+                        clip_duration_sec=max(0.5, trim_end - trim_start),
+                    )
+                    ass_temp_path.parent.mkdir(parents=True, exist_ok=True)
+                    ass_temp_path.write_text(ass_text, encoding="utf-8")
+                    ass_written = ass_temp_path
 
                 result = await asyncio.to_thread(
                     render_vertical_clip,

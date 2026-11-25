@@ -22,6 +22,7 @@ from backend.services.caption_service import (
     build_ass_subtitles,
     build_srt_subtitles,
     escape_ffmpeg_filter_path,
+    generate_hook_headline,
     sanitize_ass_text,
     transcribe_clip,
     transcribe_window_words,
@@ -361,6 +362,10 @@ class TestDbMigrationAndEndpoints:
             "export_thumb_path",
             "thumb_time_sec",
             "thumb_title_overlay",
+            "hook_enabled",
+            "hook_text",
+            "hook_style",
+            "hook_duration_mode",
         }.issubset(cols)
 
     def test_caption_thumbnail_and_render_endpoints(self, tmp_path: Path) -> None:
@@ -509,3 +514,131 @@ class TestDbMigrationAndEndpoints:
         assert len(words) == 3
         assert words[0].start == pytest.approx(0.6)
         assert len(win_segs) == 1
+
+
+class TestCenterHookBanner:
+    """Verify TikTok-style Center Hook Pill generation, ASS rounded vector drawing, and MP4 burn-in."""
+
+    def test_generate_hook_headline_context_and_exaggerated(self) -> None:
+        segs = [
+            CaptionSegment(start=0.0, end=1.5, text="The Weeknd sampled Faye Wong on this track"),
+        ]
+        ctx_hook = generate_hook_headline(
+            "caseoh_",
+            "Viral Moment #1",
+            segs,
+            mode="context",
+        )
+        assert "caseoh_" in ctx_hook or "Weeknd" in ctx_hook
+
+        ex0 = generate_hook_headline("caseoh_", "Clutch play", segs, mode="exaggerated", variant=0)
+        ex1 = generate_hook_headline("caseoh_", "Clutch play", segs, mode="exaggerated", variant=1)
+        assert len(ex0) >= 12
+        assert ex0 != ex1
+
+    def test_build_ass_with_hook_pill_shifts_cc_to_lower_safe(self) -> None:
+        segs = [
+            CaptionSegment(
+                start=0.2,
+                end=1.4,
+                text="LISTEN TO THIS SAMPLE",
+                words=[
+                    CaptionWord(start=0.2, end=0.6, word="LISTEN"),
+                    CaptionWord(start=0.6, end=1.0, word="TO"),
+                    CaptionWord(start=1.0, end=1.4, word="THIS"),
+                ],
+            )
+        ]
+        ass = build_ass_subtitles(
+            segs,
+            layout_mode="split_top_cam",
+            split_ratio=0.35,
+            caption_style="bold_pop",
+            caption_position="seam",
+            hook_text="The Weeknd samples Faye Wong in new song 'Hong Kong'",
+            hook_style="tiktok_white",
+            hook_duration_mode="intro_5s",
+            clip_duration_sec=12.0,
+        )
+        assert "Style: HookPill," in ass
+        assert "Style: HookText," in ass
+        assert "\\p1}m " in ass
+        assert "0:00:05.00,HookText" in ass
+        assert "The Weeknd samples Faye Wong" in ass
+        # Default CC must automatically move to lower_safe (Alignment=2) so it never collides with HookPill
+        default_style = next(line for line in ass.splitlines() if line.startswith("Style: Default,"))
+        assert default_style.split(",")[18] == "2"
+        cc_events = [line for line in ass.splitlines() if line.startswith("Dialogue: 0,")]
+        assert len(cc_events) == 3
+        for ev in cc_events:
+            assert "\\pos(540,672)" not in ev
+
+    def test_render_endpoint_burns_hook_banner_even_when_cc_disabled(self, tmp_path: Path) -> None:
+        settings = Settings(data_dir=tmp_path / "data")
+        app = create_app(custom_settings=settings)
+        with TestClient(app) as client:
+            raw_clip_path = settings.clips_dir / "hook_only_clip.mp4"
+            _synthesize_test_mp4(settings.ffmpeg_path, raw_clip_path, duration_sec=2.0)
+
+            clip_id = "clip-hook-pill-001"
+            with app.state.session_factory() as session:
+                session.add(
+                    ClipItem(
+                        id=clip_id,
+                        channel_login="kai_cenat",
+                        source_type="video_upload",
+                        source_ref="upload:test.mp4",
+                        title="Reaction Clip",
+                        status="pending_review",
+                        hype_score=88.0,
+                        trigger_reason="viral peak",
+                        raw_video_path=str(raw_clip_path),
+                        duration_sec=2.0,
+                        trim_start_sec=0.0,
+                        trim_end_sec=2.0,
+                        captions_enabled=False,
+                    )
+                )
+                session.commit()
+
+            patch_resp = client.patch(
+                f"/api/clips/{clip_id}",
+                json={
+                    "hook_enabled": True,
+                    "hook_text": "Bro really couldn't believe this sample!",
+                    "hook_style": "viral_gold",
+                    "hook_duration_mode": "full",
+                    "captions_enabled": False,
+                },
+            )
+            assert patch_resp.status_code == 200
+            pdata = patch_resp.json()
+            assert pdata["hook_enabled"] is True
+            assert pdata["hook_style"] == "viral_gold"
+
+            dup_resp = client.post(f"/api/clips/{clip_id}/duplicate")
+            assert dup_resp.status_code == 201
+            assert dup_resp.json()["hook_enabled"] is True
+            assert dup_resp.json()["hook_text"] == "Bro really couldn't believe this sample!"
+
+            render_resp = client.post(f"/api/clips/{clip_id}/render")
+            assert render_resp.status_code == 200
+
+            final_clip = None
+            for _ in range(60):
+                poll = client.get(f"/api/clips/{clip_id}")
+                assert poll.status_code == 200
+                final_clip = poll.json()
+                if final_clip["status"] in ("exported", "failed"):
+                    break
+                time.sleep(0.1)
+
+            assert final_clip is not None
+            assert final_clip["status"] == "exported", final_clip.get("error_message")
+            exported_mp4 = Path(final_clip["export_video_path"])
+            assert exported_mp4.is_file()
+            probe = _probe_media(settings.ffprobe_path, exported_mp4)
+            v_stream = next(s for s in probe["streams"] if s["codec_type"] == "video")
+            assert v_stream["width"] == 1080
+            assert v_stream["height"] == 1920
+

@@ -20,6 +20,7 @@ from sqlmodel import Session, select
 from backend.config import Settings, resolve_ffmpeg_path, resolve_ffprobe_path
 from backend.models import Channel, ClipItem, ClipRead, HypeEventLog, utc_now
 from backend.security import CropBox, safe_resolve_under, sanitize_chat_text, validate_crop_box
+from backend.services.caption_service import generate_hook_headline
 from backend.services.hype_detector import HypeDetector, HypeEvaluation
 from backend.services.ring_buffer import ChannelRingBuffer
 from backend.services.twitch_eventsub import TwitchEventSubClient
@@ -288,13 +289,19 @@ class LiveManager:
         ]
 
         token_hint = f" ({', '.join(evaluation.top_tokens[:3])})" if evaluation.top_tokens else ""
+        clip_title = f"{snap.display_name} {clip_title_prefix}{token_hint}"
+        default_hook = generate_hook_headline(
+            monitor.channel_login,
+            clip_title,
+            mode="context",
+        )
         clip_row = ClipItem(
             id=clip_id,
             channel_id=monitor.channel_id,
             channel_login=monitor.channel_login,
             source_type="live",
             source_ref=f"https://www.twitch.tv/{monitor.channel_login}",
-            title=f"{snap.display_name} {clip_title_prefix}{token_hint}",
+            title=clip_title,
             status="pending_review",
             hype_score=float(evaluation.fused_score),
             trigger_reason=source_reason,
@@ -311,7 +318,11 @@ class LiveManager:
             gameplay_box_json=gameplay_box_json,
             webcam_confidence=webcam_confidence,
             normalize_audio=True,
-            caption_position="seam",
+            caption_position="lower_safe",
+            hook_enabled=True,
+            hook_text=default_hook,
+            hook_style="tiktok_white",
+            hook_duration_mode="full",
         )
 
         with self.session_factory() as session:
