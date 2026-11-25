@@ -174,6 +174,7 @@ export interface ClipUpdateInput {
   thumb_title_overlay?: boolean
   webcam_box?: CropBox | null
   gameplay_box?: CropBox | null
+  sync_folder?: boolean
 }
 
 export interface SystemStatus {

@@ -226,23 +226,23 @@ export function VodScanModal({
     >
       <div className="p-5 flex flex-col gap-4">
         <div className="flex items-center justify-between gap-4 pb-3 border-b border-rule">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <Sparkles size={18} className="text-accent" aria-hidden="true" />
-            <h2 id="analyze-video-title" className="section-title text-ink">
-              Analyze Video
+            <h2 id="analyze-video-title" className="section-title">
+              New Video / VOD Analysis
             </h2>
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close video analyzer"
-            className="btn btn--compact btn--quiet"
+            className="btn btn--compact btn--quiet btn--icon"
           >
-            <X size={16} aria-hidden="true" />
+            <X size={15} aria-hidden="true" />
           </button>
         </div>
 
-        <div role="tablist" aria-label="Video input mode" className="grid grid-cols-2 gap-2">
+        <div role="tablist" aria-label="Video input mode" className="seg-group grid-cols-2 w-full">
           <button
             type="button"
             role="tab"
@@ -252,10 +252,10 @@ export function VodScanModal({
               setTab('url')
               setError(null)
             }}
-            className={`btn ${tab === 'url' ? 'btn--accent-outline' : 'btn--quiet'}`}
+            className="seg-cell flex items-center justify-center gap-1.5"
           >
-            <Link2 size={15} aria-hidden="true" />
-            <span>Video URL</span>
+            <Link2 size={14} aria-hidden="true" />
+            <span>YouTube / Twitch URL</span>
           </button>
           <button
             type="button"
@@ -266,22 +266,22 @@ export function VodScanModal({
               setTab('upload')
               setError(null)
             }}
-            className={`btn ${tab === 'upload' ? 'btn--accent-outline' : 'btn--quiet'}`}
+            className="seg-cell flex items-center justify-center gap-1.5"
           >
-            <Upload size={15} aria-hidden="true" />
-            <span>Upload Video</span>
+            <Upload size={14} aria-hidden="true" />
+            <span>Upload Local Video</span>
           </button>
         </div>
 
         <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
           {tab === 'url' ? (
             <div>
-              <div className="flex items-center justify-between gap-2 mb-1">
-                <label htmlFor="analyze-url-input" className="block text-sm text-ink-2">
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <label htmlFor="analyze-url-input" className="block text-xs font-medium text-ink-2">
                   YouTube or Twitch VOD URL
                 </label>
                 {detectedPlatform && (
-                  <span className="px-2 py-0.5 border border-accent text-accent text-xs font-medium">
+                  <span className="studio-pill studio-pill--accent">
                     {detectedPlatform === 'youtube' ? 'YouTube' : 'Twitch VOD'}
                   </span>
                 )}
@@ -311,34 +311,34 @@ export function VodScanModal({
                 className={`field-help ${displayError ? 'field-help--error' : ''}`}
               >
                 {displayError ??
-                  'Scans the full video for viral hooks, loudness bursts, reactions, and visual motion.'}
+                  'Remote-scans heatmaps, captions, and chat bursts without downloading the full VOD.'}
               </p>
 
               {detectedLiveLogin && (
-                <div className="mt-3 p-3 border border-accent bg-paper flex flex-col gap-3">
-                  <p className="text-sm text-ink">
-                    This is a live Twitch channel ({detectedLiveLogin}), not a recorded video URL.
+                <div className="mt-3 p-3.5 rounded-xl border border-accent/45 bg-accent-deep flex flex-col gap-2.5">
+                  <p className="text-xs text-ink">
+                    <strong>@{detectedLiveLogin}</strong> is a live channel URL rather than a recorded VOD.
                   </p>
                   <button
                     type="button"
                     disabled={monitoringLive || submitting}
                     aria-busy={monitoringLive}
                     onClick={() => void handleMonitorDetectedLive()}
-                    className="btn btn--primary w-full"
+                    className="btn btn--primary btn--compact !min-h-[36px] w-full"
                   >
                     {monitoringLive ? (
                       <span className="desk-spinner" aria-hidden="true" />
                     ) : (
-                      <Radio size={16} aria-hidden="true" />
+                      <Radio size={15} aria-hidden="true" />
                     )}
-                    <span>{monitoringLive ? 'Starting Live' : 'Add Live Monitor'}</span>
+                    <span>{monitoringLive ? 'Starting Live...' : 'Monitor Live Stream Instead'}</span>
                   </button>
                 </div>
               )}
             </div>
           ) : (
             <div>
-              <span className="block text-sm text-ink-2 mb-1">
+              <span className="block text-xs font-medium text-ink-2 mb-1.5">
                 Local Video File (.mp4, .mkv, .mov, .webm, .m4v)
               </span>
               <input
@@ -363,8 +363,8 @@ export function VodScanModal({
                     acceptCandidateFile(e.dataTransfer.files?.[0] ?? null)
                   }
                 }}
-                className={`p-4 border border-dashed flex flex-col gap-3 items-start ${
-                  dragOver ? 'border-accent bg-paper-2' : 'border-rule bg-paper'
+                className={`p-4 rounded-xl border border-dashed flex flex-col gap-3 items-start transition-colors ${
+                  dragOver ? 'border-accent bg-accent-deep' : 'border-rule-strong bg-inset'
                 }`}
               >
                 <div className="flex items-center justify-between gap-3 w-full flex-wrap">
@@ -377,7 +377,7 @@ export function VodScanModal({
                         </p>
                       </>
                     ) : (
-                      <p className="text-sm text-muted">
+                      <p className="text-xs text-muted">
                         Drag and drop a recorded video here, or browse from disk.
                       </p>
                     )}
@@ -389,8 +389,8 @@ export function VodScanModal({
                       onClick={() => fileInputRef.current?.click()}
                       className="btn btn--quiet btn--compact"
                     >
-                      <Video size={14} aria-hidden="true" />
-                      <span>Choose Video File</span>
+                      <Video size={13} aria-hidden="true" />
+                      <span>Browse File</span>
                     </button>
                     {selectedFile && (
                       <button
@@ -400,7 +400,7 @@ export function VodScanModal({
                           setSelectedFile(null)
                           if (fileInputRef.current) fileInputRef.current.value = ''
                         }}
-                        className="btn btn--quiet btn--compact"
+                        className="btn btn--ghost btn--compact"
                       >
                         Clear
                       </button>
@@ -418,8 +418,8 @@ export function VodScanModal({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label htmlFor="analyze-max-clips" className="block text-sm text-ink-2 mb-1">
-                Max clips
+              <label htmlFor="analyze-max-clips" className="block text-xs font-medium text-ink-2 mb-1">
+                Max clips to extract
               </label>
               <input
                 id="analyze-max-clips"
@@ -434,8 +434,8 @@ export function VodScanModal({
             </div>
 
             <div>
-              <label htmlFor="analyze-length-select" className="block text-sm text-ink-2 mb-1">
-                Clip length
+              <label htmlFor="analyze-length-select" className="block text-xs font-medium text-ink-2 mb-1">
+                Target clip length
               </label>
               <select
                 id="analyze-length-select"
@@ -444,16 +444,16 @@ export function VodScanModal({
                 disabled={submitting}
                 className="field-select"
               >
-                <option value="quick">15-35s (Quick)</option>
-                <option value="standard">20-55s (Standard)</option>
-                <option value="story">40-75s (Story)</option>
-                <option value="long">60-90s (60s+ Viral)</option>
-                <option value="extended">60-120s (Long Form)</option>
+                <option value="quick">15–35s (Quick Hook)</option>
+                <option value="standard">20–55s (Standard Short)</option>
+                <option value="story">40–75s (Story Arc)</option>
+                <option value="long">60–90s (60s+ Viral)</option>
+                <option value="extended">60–120s (Long Cut)</option>
               </select>
             </div>
 
             <div>
-              <label htmlFor="analyze-threshold" className="block text-sm text-ink-2 mb-1">
+              <label htmlFor="analyze-threshold" className="block text-xs font-medium text-ink-2 mb-1">
                 Min viral score
               </label>
               <input
@@ -469,8 +469,8 @@ export function VodScanModal({
             </div>
 
             <div>
-              <label htmlFor="analyze-channel-select" className="block text-sm text-ink-2 mb-1">
-                Channel preset
+              <label htmlFor="analyze-channel-select" className="block text-xs font-medium text-ink-2 mb-1">
+                Framing preset
               </label>
               <select
                 id="analyze-channel-select"
@@ -479,7 +479,7 @@ export function VodScanModal({
                 disabled={submitting}
                 className="field-select"
               >
-                <option value="">Auto-detect</option>
+                <option value="">Auto-detect webcam</option>
                 {channels.map((ch) => (
                   <option key={ch.id} value={String(ch.id)}>
                     {ch.display_name || ch.channel_login}
@@ -489,34 +489,34 @@ export function VodScanModal({
             </div>
           </div>
 
-          <label className="flex items-center gap-2 text-sm text-ink-2 cursor-pointer">
+          <label className="flex items-center gap-2 text-xs text-ink-2 cursor-pointer">
             <input
               type="checkbox"
               checked={useSpeechAnalysis}
               disabled={submitting}
               onChange={(e) => setUseSpeechAnalysis(e.target.checked)}
-              className="accent-current"
+              className="w-4 h-4 accent-accent rounded"
             />
-            <span>Analyze speech &amp; viral hooks with local Whisper captions</span>
+            <span>Analyze speech &amp; viral hooks with Whisper captions</span>
           </label>
 
           {visibleProgress && (
             <div
-              className={`p-3 border bg-paper flex flex-col gap-2 ${
-                isJobDone ? 'border-success' : isJobFailed ? 'border-error' : 'border-rule'
+              className={`p-3.5 rounded-xl border bg-inset flex flex-col gap-2 ${
+                isJobDone ? 'border-emerald-500/45' : isJobFailed ? 'border-rose-500/45' : 'border-rule'
               }`}
             >
-              <div className="flex items-center justify-between gap-2 text-sm">
+              <div className="flex items-center justify-between gap-2 text-xs">
                 <span className="font-medium text-ink">
-                  {visibleProgress.message || visibleProgress.stage || 'Analyzing video'}
+                  {visibleProgress.message || visibleProgress.stage || 'Analyzing video...'}
                 </span>
                 {isJobDone ? (
-                  <span className="flex items-center gap-1.5 num text-success font-medium shrink-0">
-                    <CheckCircle2 size={15} aria-hidden="true" />
+                  <span className="flex items-center gap-1.5 num text-emerald-400 font-semibold shrink-0">
+                    <CheckCircle2 size={14} aria-hidden="true" />
                     <span>Done · 100%</span>
                   </span>
                 ) : (
-                  <span className="num text-accent font-medium shrink-0">{pct}%</span>
+                  <span className="num text-accent font-semibold shrink-0">{pct}%</span>
                 )}
               </div>
               <div
@@ -525,22 +525,22 @@ export function VodScanModal({
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-valuenow={pct}
-                className="h-2 w-full bg-paper-2 border border-rule overflow-hidden"
+                className="h-2 w-full rounded-full bg-paper-2 border border-rule overflow-hidden"
               >
                 <div
                   className={
                     isJobFailed
-                      ? 'h-full bg-error'
+                      ? 'h-full rounded-full bg-error'
                       : isJobDone
-                        ? 'h-full bg-success'
-                        : 'h-full bg-accent'
+                        ? 'h-full rounded-full bg-success'
+                        : 'h-full rounded-full bg-accent'
                   }
                   style={{ width: `${pct}%` }}
                 />
               </div>
               {visibleProgress.clips_found != null && (
-                <p className={`text-xs num ${isJobDone ? 'text-success font-medium' : 'text-muted'}`}>
-                  {visibleProgress.clips_found} viral clip(s) ready in Review Queue.
+                <p className={`text-xs num ${isJobDone ? 'text-emerald-400 font-medium' : 'text-muted'}`}>
+                  {visibleProgress.clips_found} viral clip(s) added to its own Video Folder.
                 </p>
               )}
               {isJobFailed && (
@@ -551,7 +551,7 @@ export function VodScanModal({
             </div>
           )}
 
-          <div className="flex items-center justify-end gap-3 pt-2 border-t border-rule">
+          <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-rule">
             {isJobDone ? (
               <>
                 <button
@@ -563,11 +563,7 @@ export function VodScanModal({
                 >
                   Analyze Another
                 </button>
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="btn btn--primary"
-                >
+                <button type="button" onClick={onClose} className="btn btn--primary">
                   <Check size={15} aria-hidden="true" />
                   <span>Done</span>
                 </button>
@@ -575,7 +571,7 @@ export function VodScanModal({
             ) : (
               <>
                 <button type="button" onClick={onClose} className="btn btn--quiet">
-                  Close
+                  Cancel
                 </button>
                 <button
                   type="submit"
@@ -584,7 +580,7 @@ export function VodScanModal({
                   className="btn btn--primary"
                 >
                   {busy && <span className="desk-spinner" aria-hidden="true" />}
-                  <span>{busy ? 'Analyzing Video' : 'Find Viral Clips'}</span>
+                  <span>{busy ? 'Scanning Video...' : 'Find Viral Clips'}</span>
                 </button>
               </>
             )}

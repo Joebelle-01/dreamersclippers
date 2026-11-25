@@ -1,7 +1,11 @@
-import { Film, KeyRound, Radio, RefreshCw, Video } from 'lucide-react'
+import { Activity, Clapperboard, Cpu, KeyRound, PlusCircle, Radio, RefreshCw, Sparkles, Wifi } from 'lucide-react'
 import type { SystemStatus, TwitchStatus } from '../types'
 
+export type StudioWorkspaceTab = 'studio' | 'radar'
+
 interface TopBarProps {
+  activeWorkspace: StudioWorkspaceTab
+  onSelectWorkspace: (tab: StudioWorkspaceTab) => void
   systemStatus: SystemStatus | null
   statusLoading: boolean
   statusError: string | null
@@ -15,6 +19,8 @@ interface TopBarProps {
 }
 
 export function TopBar({
+  activeWorkspace,
+  onSelectWorkspace,
   systemStatus,
   statusLoading,
   statusError,
@@ -32,108 +38,141 @@ export function TopBar({
 
   return (
     <header className="desk-topbar">
-      <div className="flex items-center gap-4 min-w-0">
-        <h1 className="desk-wordmark">StreamClippers</h1>
+      {/* Brand + Live Status + Workspace Mode Switcher */}
+      <div className="flex items-center gap-3.5 flex-wrap min-w-0">
+        <div className="flex items-center gap-2.5">
+          <div
+            aria-hidden="true"
+            className="w-8 h-8 rounded-lg flex items-center justify-center bg-accent text-white shadow-sm"
+          >
+            <Sparkles size={16} />
+          </div>
+          <div className="flex items-center gap-2">
+            <h1 className="desk-wordmark">StreamClippers</h1>
+            <span className="studio-pill studio-pill--accent">Studio</span>
+          </div>
+        </div>
+
+        <div
+          role="tablist"
+          aria-label="Studio workspace view"
+          className="seg-group grid-cols-2 ml-1"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeWorkspace === 'studio'}
+            onClick={() => onSelectWorkspace('studio')}
+            className="seg-cell flex items-center gap-1.5"
+          >
+            <Clapperboard size={13} aria-hidden="true" />
+            <span>Clip Editor</span>
+            <span className="num opacity-80">({pendingCount + exportedCount})</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeWorkspace === 'radar'}
+            onClick={() => onSelectWorkspace('radar')}
+            className="seg-cell flex items-center gap-1.5"
+          >
+            <Activity size={13} aria-hidden="true" />
+            <span>Live Radar</span>
+            {activeMonitors > 0 && (
+              <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" aria-hidden="true" />
+            )}
+          </button>
+        </div>
+
         <div
           role="status"
           aria-live="polite"
-          className={`flex items-center gap-2 px-3 py-1 border ${
-            activeMonitors > 0
-              ? 'border-accent bg-paper-2 text-accent'
-              : 'border-rule bg-paper-2 text-muted'
+          className={`studio-pill ${
+            activeMonitors > 0 ? 'studio-pill--success' : ''
           }`}
         >
-          <Radio size={15} aria-hidden="true" />
-          <span className="num text-sm font-medium">
-            {activeMonitors > 0 ? `Live ${activeMonitors}` : 'Standby'}
+          <Radio size={13} aria-hidden="true" />
+          <span className="num">
+            {activeMonitors > 0 ? `${activeMonitors} Monitoring` : 'Standby'}
           </span>
         </div>
       </div>
 
-      <div className="flex items-center gap-4 flex-wrap">
-        <div className="flex items-center gap-3 md:pr-4 md:border-r md:border-rule text-sm">
+      {/* System Telemetry + Primary Actions */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="hidden xl:flex items-center gap-2.5 text-xs">
           {statusLoading && !systemStatus ? (
-            <span className="text-muted">Checking encoder</span>
+            <span className="studio-pill">Checking engine...</span>
           ) : statusError ? (
-            <div className="flex items-center gap-2 text-error">
-              <span>Backend offline</span>
+            <div className="flex items-center gap-2">
+              <span className="studio-pill studio-pill--danger">Backend offline</span>
               <button
                 type="button"
                 onClick={onRetryStatus}
                 className="btn btn--quiet btn--compact"
                 aria-label="Retry backend status check"
               >
-                <RefreshCw size={14} aria-hidden="true" />
+                <RefreshCw size={13} aria-hidden="true" />
                 <span>Retry</span>
               </button>
             </div>
           ) : (
-            <dl className="flex items-center gap-4 m-0 flex-wrap">
-              <div className="flex items-center gap-2">
-                <dt className="text-muted">FFmpeg</dt>
-                <dd className={`m-0 font-medium ${ffmpegReady ? 'text-ink' : 'text-error'}`}>
-                  {ffmpegReady ? 'Ready' : 'Missing'}
-                </dd>
-              </div>
-              <div className="flex items-center gap-2 md:pl-4 md:border-l md:border-rule">
-                <dt className="text-muted">Encoder</dt>
-                <dd className={`m-0 font-medium ${nvencReady ? 'text-success' : 'text-ink-2'}`}>
-                  {nvencReady
-                    ? systemStatus?.gpu_name
-                      ? `NVENC (${systemStatus.gpu_name})`
-                      : 'RTX NVENC'
-                    : 'x264 CPU'}
-                </dd>
-              </div>
-              <div className="flex items-center gap-2 md:pl-4 md:border-l md:border-rule">
-                <dt className="text-muted">Telemetry</dt>
-                <dd
-                  className={`m-0 font-medium ${
-                    wsState === 'open'
-                      ? 'text-success'
-                      : wsState === 'connecting'
-                        ? 'text-accent'
-                        : 'text-error'
-                  }`}
-                >
-                  {wsState === 'open' ? 'Connected' : wsState === 'connecting' ? 'Linking' : 'Disconnected'}
-                </dd>
-              </div>
-            </dl>
-          )}
-        </div>
+            <>
+              <span
+                className={`studio-pill ${
+                  !ffmpegReady ? 'studio-pill--danger' : nvencReady ? 'studio-pill--cyan' : ''
+                }`}
+                title={systemStatus?.gpu_name ?? 'Video Encoder'}
+              >
+                <Cpu size={13} aria-hidden="true" />
+                <span>
+                  {!ffmpegReady
+                    ? 'FFmpeg Missing'
+                    : nvencReady
+                      ? systemStatus?.gpu_name
+                        ? `NVENC · ${systemStatus.gpu_name.replace('NVIDIA GeForce ', '')}`
+                        : 'RTX NVENC'
+                      : 'x264 CPU'}
+                </span>
+              </span>
 
-        <div className="flex items-center gap-3 md:pr-4 md:border-r md:border-rule text-sm">
-          <div className="flex items-center gap-2">
-            <Film size={15} className="text-accent" aria-hidden="true" />
-            <span className="text-muted">Review queue</span>
-            <span className="num font-semibold text-ink">{pendingCount}</span>
-          </div>
-          <div className="flex items-center gap-2 pl-3 border-l border-rule">
-            <span className="text-muted">Exported</span>
-            <span className="num font-medium text-ink-2">{exportedCount}</span>
-          </div>
+              <span
+                className={`studio-pill ${
+                  wsState === 'open'
+                    ? 'studio-pill--success'
+                    : wsState === 'connecting'
+                      ? 'studio-pill--accent'
+                      : 'studio-pill--danger'
+                }`}
+              >
+                <Wifi size={13} aria-hidden="true" />
+                <span>
+                  {wsState === 'open' ? 'Live Sync' : wsState === 'connecting' ? 'Syncing' : 'Offline'}
+                </span>
+              </span>
+            </>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={onOpenTwitchModal}
-            className={`btn whitespace-nowrap ${
+            className={`btn btn--compact ${
               twitchStatus?.user_connected ? 'btn--accent-outline' : 'btn--quiet'
             }`}
           >
-            <KeyRound size={15} aria-hidden="true" />
+            <KeyRound size={14} aria-hidden="true" />
             <span>{twitchStatus?.user_connected ? 'Twitch Linked' : 'Twitch API'}</span>
           </button>
 
           <button
             type="button"
             onClick={onOpenVodModal}
-            className="btn btn--accent-outline whitespace-nowrap"
+            className="btn btn--primary btn--compact !min-h-[36px] !px-3.5"
           >
-            <Video size={16} aria-hidden="true" />
-            <span>Analyze Video</span>
+            <PlusCircle size={15} aria-hidden="true" />
+            <span>New Video / VOD</span>
           </button>
         </div>
       </div>

@@ -1104,7 +1104,7 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
                 clip.gameplay_box_json = gameplay_json
 
             session.add(clip)
-            if (
+            if payload.sync_folder and (
                 has_webcam
                 or has_gameplay
                 or payload.layout_mode is not None
@@ -1115,6 +1115,94 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
             session.commit()
             session.refresh(clip)
             return ClipRead.from_orm_row(clip)
+
+    @fastapi_app.post("/api/clips/{clip_id}/duplicate", response_model=ClipRead, status_code=201)
+    async def duplicate_clip(clip_id: str, request: Request) -> ClipRead:
+        settings = _state_settings(request)
+        session_factory = _state_session_factory(request)
+
+        with session_factory() as session:
+            src_clip = session.get(ClipItem, clip_id)
+            if src_clip is None:
+                raise HTTPException(status_code=404, detail="Clip not found")
+            src_raw = src_clip.raw_video_path
+            src_thumb = src_clip.thumbnail_path
+            base_title = sanitize_chat_text(f"{src_clip.title} (Cut)", max_len=140) or "Clip Cut"
+            new_id = str(uuid4())
+
+            try:
+                resolved_src_raw = safe_resolve_under(settings.clips_dir, src_raw)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if not resolved_src_raw.is_file():
+                raise HTTPException(status_code=404, detail="Source clip video file not found")
+
+            target_dir = resolved_src_raw.parent
+            new_raw_path = safe_resolve_under(settings.clips_dir, target_dir / f"{new_id}.mp4")
+
+            new_thumb_str: str | None = None
+            resolved_src_thumb: Path | None = None
+            new_thumb_path: Path | None = None
+            if src_thumb:
+                with suppress(ValueError, OSError):
+                    cand_thumb = safe_resolve_under(settings.thumbs_dir, src_thumb)
+                    if cand_thumb.is_file():
+                        resolved_src_thumb = cand_thumb
+                        new_thumb_path = safe_resolve_under(
+                            settings.thumbs_dir,
+                            cand_thumb.parent / f"{new_id}{cand_thumb.suffix or '.jpg'}",
+                        )
+
+        await asyncio.to_thread(shutil.copy2, resolved_src_raw, new_raw_path)
+        if resolved_src_thumb is not None and new_thumb_path is not None:
+            with suppress(OSError):
+                await asyncio.to_thread(shutil.copy2, resolved_src_thumb, new_thumb_path)
+                new_thumb_str = str(new_thumb_path)
+
+        with session_factory() as session:
+            src_clip = session.get(ClipItem, clip_id)
+            if src_clip is None:
+                with suppress(OSError):
+                    new_raw_path.unlink(missing_ok=True)
+                raise HTTPException(status_code=404, detail="Clip not found")
+
+            dup = ClipItem(
+                id=new_id,
+                channel_id=src_clip.channel_id,
+                channel_login=src_clip.channel_login,
+                source_type=src_clip.source_type,
+                source_ref=src_clip.source_ref,
+                title=base_title,
+                status="pending_review",
+                hype_score=src_clip.hype_score,
+                trigger_reason=src_clip.trigger_reason,
+                trigger_chat_samples_json=src_clip.trigger_chat_samples_json,
+                hype_timeline_json=src_clip.hype_timeline_json,
+                raw_video_path=str(new_raw_path),
+                thumbnail_path=new_thumb_str,
+                export_video_path=None,
+                duration_sec=src_clip.duration_sec,
+                trim_start_sec=src_clip.trim_start_sec,
+                trim_end_sec=src_clip.trim_end_sec,
+                layout_mode=src_clip.layout_mode,
+                split_ratio=src_clip.split_ratio,
+                webcam_box_json=src_clip.webcam_box_json,
+                gameplay_box_json=src_clip.gameplay_box_json,
+                webcam_confidence=src_clip.webcam_confidence,
+                normalize_audio=src_clip.normalize_audio,
+                captions_enabled=src_clip.captions_enabled,
+                caption_style=src_clip.caption_style,
+                caption_position=src_clip.caption_position,
+                captions_json=src_clip.captions_json,
+                export_srt_path=None,
+                export_thumb_path=None,
+                thumb_time_sec=src_clip.thumb_time_sec,
+                thumb_title_overlay=src_clip.thumb_title_overlay,
+            )
+            session.add(dup)
+            session.commit()
+            session.refresh(dup)
+            return ClipRead.from_orm_row(dup)
 
     @fastapi_app.delete("/api/clips/{clip_id}")
     async def delete_clip(clip_id: str, request: Request) -> dict[str, Any]:

@@ -35,14 +35,12 @@ export function TwitchSettingsModal({
 
   const [activeTab, setActiveTab] = useState<'api' | 'clips'>('api')
 
-  // API & OAuth form state
   const [clientId, setClientId] = useState('')
   const [clientSecret, setClientSecret] = useState('')
   const [configBusy, setConfigBusy] = useState(false)
   const [oauthBusy, setOauthBusy] = useState<'viewer' | 'broadcaster' | 'disconnect' | null>(null)
   const [apiFeedback, setApiFeedback] = useState<{ kind: 'error' | 'success'; text: string } | null>(null)
 
-  // Top Clips Importer state
   const [selectedLoginOption, setSelectedLoginOption] = useState<string>('')
   const [customLogin, setCustomLogin] = useState('')
   const [period, setPeriod] = useState<ClipPeriod>('24h')
@@ -193,7 +191,7 @@ export function TwitchSettingsModal({
       await onImportClip(clipUrl, broadcasterLogin ?? targetLogin, usePortrait)
       setImportFeedback({
         kind: 'success',
-        text: 'Clip imported into Review Workbench.',
+        text: 'Clip imported into Studio Editor.',
       })
     } catch (err) {
       setImportFeedback({
@@ -236,23 +234,23 @@ export function TwitchSettingsModal({
     >
       <div className="p-5 flex flex-col gap-4">
         <div className="flex items-center justify-between gap-4 pb-3 border-b border-rule">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <KeyRound size={18} className="text-accent" aria-hidden="true" />
-            <h2 id="twitch-modal-title" className="section-title text-ink">
-              Twitch API and Clips
+            <h2 id="twitch-modal-title" className="section-title">
+              Twitch Integration &amp; Clip Importer
             </h2>
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close Twitch settings"
-            className="btn btn--compact btn--quiet"
+            className="btn btn--compact btn--quiet btn--icon"
           >
-            <X size={16} aria-hidden="true" />
+            <X size={15} aria-hidden="true" />
           </button>
         </div>
 
-        <div role="tablist" aria-label="Twitch settings sections" className="grid grid-cols-2">
+        <div role="tablist" aria-label="Twitch settings sections" className="seg-group grid-cols-2 w-full">
           <button
             type="button"
             role="tab"
@@ -261,7 +259,7 @@ export function TwitchSettingsModal({
             onClick={() => setActiveTab('api')}
             className="seg-cell"
           >
-            API and OAuth
+            Optional API &amp; OAuth
           </button>
           <button
             type="button"
@@ -271,19 +269,19 @@ export function TwitchSettingsModal({
             onClick={() => setActiveTab('clips')}
             className="seg-cell"
           >
-            Import Top Clips
+            Import Top Twitch Clips
           </button>
         </div>
 
         {activeTab === 'api' ? (
           <div role="tabpanel" aria-labelledby="twitch-tab-api" className="flex flex-col gap-4">
-            <div className="p-3 border border-rule bg-paper flex flex-col gap-2 text-sm">
+            <div className="p-3.5 rounded-xl border border-rule bg-inset flex flex-col gap-2.5 text-xs">
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div className="flex items-center gap-2">
                   <span className="text-muted">App token</span>
                   <span
-                    className={`font-medium ${
-                      twitchStatus?.app_token_ready ? 'text-success' : 'text-ink-2'
+                    className={`studio-pill ${
+                      twitchStatus?.app_token_ready ? 'studio-pill--success' : ''
                     }`}
                   >
                     {statusLoading && !twitchStatus
@@ -297,12 +295,8 @@ export function TwitchSettingsModal({
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <Radio size={14} className={twitchStatus?.eventsub_connected ? 'text-success' : 'text-muted'} aria-hidden="true" />
-                  <span
-                    className={`font-medium ${
-                      twitchStatus?.eventsub_connected ? 'text-success' : 'text-muted'
-                    }`}
-                  >
+                  <Radio size={13} className={twitchStatus?.eventsub_connected ? 'text-emerald-400' : 'text-muted'} aria-hidden="true" />
+                  <span className={twitchStatus?.eventsub_connected ? 'text-emerald-400 font-medium' : 'text-muted'}>
                     {twitchStatus?.eventsub_connected ? 'EventSub Live' : 'EventSub Standby'}
                   </span>
                 </div>
@@ -311,11 +305,7 @@ export function TwitchSettingsModal({
               <div className="flex items-center justify-between gap-3 flex-wrap pt-2 border-t border-rule">
                 <div className="flex items-center gap-2">
                   <span className="text-muted">User OAuth</span>
-                  <span
-                    className={`font-medium ${
-                      twitchStatus?.user_connected ? 'text-accent' : 'text-muted'
-                    }`}
-                  >
+                  <span className={twitchStatus?.user_connected ? 'text-accent font-semibold' : 'text-muted'}>
                     {twitchStatus?.user_connected
                       ? `@${twitchStatus.user_login ?? 'connected'} (${
                           twitchStatus.has_broadcaster_scopes ? 'Broadcaster' : 'Viewer'
@@ -331,15 +321,15 @@ export function TwitchSettingsModal({
                     onClick={handleDisconnect}
                     className="btn btn--compact btn--danger"
                   >
-                    <Unlink size={13} aria-hidden="true" />
+                    <Unlink size={12} aria-hidden="true" />
                     <span>Disconnect</span>
                   </button>
                 )}
               </div>
 
-              <div className="pt-2 border-t border-rule text-xs text-muted flex flex-col gap-1">
+              <div className="pt-2 border-t border-rule text-muted flex flex-col gap-1">
                 <span>OAuth Redirect URI for Twitch Developer Console:</span>
-                <code className="text-ink-2 break-all">
+                <code className="num text-ink-2 break-all">
                   {twitchStatus?.redirect_uri || 'http://127.0.0.1:8430/api/twitch/oauth/callback'}
                 </code>
               </div>
@@ -348,7 +338,7 @@ export function TwitchSettingsModal({
             <form onSubmit={handleSaveCredentials} noValidate className="flex flex-col gap-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label htmlFor="twitch-client-id" className="block text-sm text-ink-2 mb-1">
+                  <label htmlFor="twitch-client-id" className="block text-xs font-medium text-ink-2 mb-1">
                     Twitch Client ID
                   </label>
                   <input
@@ -369,7 +359,7 @@ export function TwitchSettingsModal({
                 </div>
 
                 <div>
-                  <label htmlFor="twitch-client-secret" className="block text-sm text-ink-2 mb-1">
+                  <label htmlFor="twitch-client-secret" className="block text-xs font-medium text-ink-2 mb-1">
                     Twitch Client Secret
                   </label>
                   <input
@@ -400,7 +390,7 @@ export function TwitchSettingsModal({
                 }`}
               >
                 {apiFeedback?.text ??
-                  'Credentials are verified with Twitch OAuth and stored locally without returning secrets.'}
+                  'Optional — live monitoring and video analysis already work without Twitch API keys.'}
               </p>
 
               <div className="flex items-center justify-between gap-2 flex-wrap pt-2 border-t border-rule">
@@ -410,9 +400,9 @@ export function TwitchSettingsModal({
                     disabled={!twitchStatus?.configured || oauthBusy !== null}
                     aria-busy={oauthBusy === 'viewer'}
                     onClick={() => handleLaunchOAuth('viewer')}
-                    className="btn btn--accent-outline whitespace-nowrap"
+                    className="btn btn--accent-outline btn--compact whitespace-nowrap"
                   >
-                    <Link2 size={14} aria-hidden="true" />
+                    <Link2 size={13} aria-hidden="true" />
                     <span>Connect Viewer OAuth</span>
                   </button>
                   <button
@@ -420,9 +410,9 @@ export function TwitchSettingsModal({
                     disabled={!twitchStatus?.configured || oauthBusy !== null}
                     aria-busy={oauthBusy === 'broadcaster'}
                     onClick={() => handleLaunchOAuth('broadcaster')}
-                    className="btn btn--quiet whitespace-nowrap"
+                    className="btn btn--quiet btn--compact whitespace-nowrap"
                   >
-                    <Link2 size={14} aria-hidden="true" />
+                    <Link2 size={13} aria-hidden="true" />
                     <span>Connect Broadcaster</span>
                   </button>
                 </div>
@@ -431,15 +421,12 @@ export function TwitchSettingsModal({
                   type="submit"
                   disabled={configBusy}
                   aria-busy={configBusy}
-                  className="btn btn--primary"
+                  className="btn btn--primary btn--compact !min-h-[36px]"
                 >
                   {configBusy && <span className="desk-spinner" aria-hidden="true" />}
-                  <span>{configBusy ? 'Verifying' : 'Save Credentials'}</span>
+                  <span>{configBusy ? 'Verifying...' : 'Save Credentials'}</span>
                 </button>
               </div>
-              <p className="text-xs text-muted">
-                Viewer enables clips:edit; Broadcaster adds clip downloads, VOD clips, EventSub Hype Train, and markers.
-              </p>
             </form>
           </div>
         ) : (
@@ -447,7 +434,7 @@ export function TwitchSettingsModal({
             <form onSubmit={handleFetchTopClips} className="flex flex-col gap-3">
               <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end">
                 <div>
-                  <label htmlFor="top-clips-channel" className="block text-sm text-ink-2 mb-1">
+                  <label htmlFor="top-clips-channel" className="block text-xs font-medium text-ink-2 mb-1">
                     Channel
                   </label>
                   {channels.length > 0 ? (
@@ -479,8 +466,8 @@ export function TwitchSettingsModal({
                 </div>
 
                 <div>
-                  <span className="block text-sm text-ink-2 mb-1">Period</span>
-                  <div className="grid grid-cols-3" role="group" aria-label="Clip time window">
+                  <span className="block text-xs font-medium text-ink-2 mb-1">Period</span>
+                  <div className="seg-group grid-cols-3" role="group" aria-label="Clip time window">
                     {(['24h', '7d', '30d'] as const).map((p) => (
                       <button
                         key={p}
@@ -498,7 +485,7 @@ export function TwitchSettingsModal({
 
               {(selectedLoginOption === '__custom__' || channels.length === 0) && channels.length > 0 && (
                 <div>
-                  <label htmlFor="top-clips-custom-login" className="block text-sm text-ink-2 mb-1">
+                  <label htmlFor="top-clips-custom-login" className="block text-xs font-medium text-ink-2 mb-1">
                     Custom channel login or URL
                   </label>
                   <input
@@ -515,7 +502,7 @@ export function TwitchSettingsModal({
 
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <label
-                  className={`flex items-center gap-2 text-sm ${
+                  className={`flex items-center gap-2 text-xs ${
                     broadcasterAllowed ? 'text-ink-2 cursor-pointer' : 'text-muted cursor-not-allowed opacity-55'
                   }`}
                 >
@@ -524,7 +511,7 @@ export function TwitchSettingsModal({
                     checked={preferPortrait}
                     disabled={!broadcasterAllowed}
                     onChange={(e) => setPreferPortrait(e.target.checked)}
-                    className="w-4 h-4 accent-accent"
+                    className="w-4 h-4 accent-accent rounded"
                   />
                   <span>
                     Prefer Portrait{broadcasterAllowed ? '' : ' (requires Broadcaster OAuth)'}
@@ -535,16 +522,16 @@ export function TwitchSettingsModal({
                   type="submit"
                   disabled={fetchingClips || !twitchStatus?.configured}
                   aria-busy={fetchingClips}
-                  className="btn btn--accent-outline whitespace-nowrap"
+                  className="btn btn--accent-outline btn--compact whitespace-nowrap"
                 >
                   {fetchingClips && <span className="desk-spinner" aria-hidden="true" />}
-                  <span>{fetchingClips ? 'Fetching' : 'Fetch Clips'}</span>
+                  <span>{fetchingClips ? 'Fetching...' : 'Fetch Top Clips'}</span>
                 </button>
               </div>
             </form>
 
             {clipsError && (
-              <p className="text-sm text-error" role="alert">
+              <p className="text-xs text-error" role="alert">
                 {clipsError}
               </p>
             )}
@@ -553,26 +540,26 @@ export function TwitchSettingsModal({
               <p
                 role="status"
                 aria-live="polite"
-                className={`text-sm ${importFeedback.kind === 'error' ? 'text-error' : 'text-success'}`}
+                className={`text-xs ${importFeedback.kind === 'error' ? 'text-error' : 'text-emerald-400'}`}
               >
                 {importFeedback.text}
               </p>
             )}
 
-            <div className="border border-rule bg-paper max-h-64 overflow-y-auto">
+            <div className="rounded-xl border border-rule bg-inset max-h-64 overflow-y-auto">
               {fetchingClips ? (
                 <div className="p-3 flex flex-col gap-2" aria-busy="true" aria-label="Loading top Twitch clips">
                   {[1, 2, 3].map((slot) => (
-                    <div key={slot} className="h-14 bg-paper-2 border border-rule" />
+                    <div key={slot} className="h-14 rounded-lg bg-paper-2 border border-rule" />
                   ))}
                 </div>
               ) : topClips.length === 0 ? (
-                <div className="p-4 text-sm text-muted">
+                <div className="p-4 text-xs text-muted">
                   {clipsFetchedOnce
                     ? 'No clips returned for this channel and period.'
                     : twitchStatus?.configured
-                      ? 'Choose a channel and click Fetch Clips to browse top moments.'
-                      : 'Configure Twitch Client ID and Secret in API and OAuth first.'}
+                      ? 'Choose a channel and click Fetch Top Clips to browse top moments.'
+                      : 'Configure Twitch Client ID and Secret in Optional API & OAuth first.'}
                 </div>
               ) : (
                 <ul className="list-none m-0 p-0 divide-y divide-rule">
@@ -580,7 +567,7 @@ export function TwitchSettingsModal({
                     const busy = importingKey === clip.id
                     return (
                       <li key={clip.id} className="p-3 flex items-center gap-3">
-                        <div className="w-24 h-14 bg-paper-2 border border-rule shrink-0 overflow-hidden flex items-center justify-center">
+                        <div className="w-24 h-14 rounded-md bg-paper-2 border border-rule shrink-0 overflow-hidden flex items-center justify-center">
                           {clip.thumbnail_url ? (
                             <img
                               src={clip.thumbnail_url}
@@ -593,13 +580,13 @@ export function TwitchSettingsModal({
                               className="w-full h-full object-cover"
                             />
                           ) : (
-                            <Film size={16} className="text-muted" aria-hidden="true" />
+                            <Film size={15} className="text-muted" aria-hidden="true" />
                           )}
                         </div>
 
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-ink truncate">{clip.title}</p>
-                          <div className="flex items-center gap-3 text-xs text-muted mt-1 num">
+                          <p className="text-xs font-semibold text-ink truncate">{clip.title}</p>
+                          <div className="flex items-center gap-3 text-[11px] text-muted mt-1 num">
                             <span>{clip.creator_name || clip.broadcaster_name || 'Twitch'}</span>
                             <span>{clip.view_count.toLocaleString()} views</span>
                             <span>{clip.duration.toFixed(1)}s</span>
@@ -616,9 +603,9 @@ export function TwitchSettingsModal({
                           {busy ? (
                             <span className="desk-spinner" aria-hidden="true" />
                           ) : (
-                            <Download size={14} aria-hidden="true" />
+                            <Download size={13} aria-hidden="true" />
                           )}
-                          <span>{busy ? 'Importing' : 'Import'}</span>
+                          <span>{busy ? 'Importing...' : 'Import'}</span>
                         </button>
                       </li>
                     )

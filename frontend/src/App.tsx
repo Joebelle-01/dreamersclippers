@@ -7,6 +7,7 @@ import {
   deleteClip,
   detectClipWebcam,
   disconnectTwitchOAuth,
+  duplicateClip,
   fetchChannels,
   fetchClips,
   fetchSystemStatus,
@@ -33,7 +34,7 @@ import {
 import { ChannelRail } from './components/ChannelRail'
 import { LiveRadarPanel } from './components/LiveRadarPanel'
 import { ReviewWorkbench } from './components/ReviewWorkbench'
-import { TopBar } from './components/TopBar'
+import { TopBar, type StudioWorkspaceTab } from './components/TopBar'
 import { TwitchSettingsModal } from './components/TwitchSettingsModal'
 import { VodScanModal } from './components/VodScanModal'
 import type {
@@ -55,10 +56,11 @@ import type {
   VodProgressEvent,
 } from './types'
 
-const MAX_TICKS = 60
-const MAX_CHAT = 50
+const MAX_TICKS_PER_CHANNEL = 90
+const MAX_CHAT_PER_CHANNEL = 40
 
 export function App() {
+  const [activeWorkspace, setActiveWorkspace] = useState<StudioWorkspaceTab>('studio')
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null)
   const [statusLoading, setStatusLoading] = useState(true)
   const [statusError, setStatusError] = useState<string | null>(null)
@@ -66,12 +68,11 @@ export function App() {
   const [channels, setChannels] = useState<Channel[]>([])
   const [channelsLoading, setChannelsLoading] = useState(true)
   const [channelsError, setChannelsError] = useState<string | null>(null)
+  const [selectedChannelId, setSelectedChannelId] = useState<number | null>(null)
 
   const [clips, setClips] = useState<ClipItem[]>([])
   const [clipsLoading, setClipsLoading] = useState(true)
   const [clipsError, setClipsError] = useState<string | null>(null)
-
-  const [selectedChannelId, setSelectedChannelId] = useState<number | null>(null)
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
   const [selectedFolderKey, setSelectedFolderKey] = useState<string>('__latest__')
 
@@ -79,12 +80,16 @@ export function App() {
   const [ticksByChannel, setTicksByChannel] = useState<Record<number, HypeTickEvent[]>>({})
   const [latestTicks, setLatestTicks] = useState<Record<number, HypeTickEvent>>({})
   const [chatByChannel, setChatByChannel] = useState<Record<number, ChatBurstEvent[]>>({})
-  const [metadataByChannel, setMetadataByChannel] = useState<Record<number, ChannelMetadataEvent>>({})
+  const [metadataByChannel, setMetadataByChannel] = useState<
+    Record<number, ChannelMetadataEvent>
+  >({})
+
+  const [vodModalOpen, setVodModalOpen] = useState(false)
+  const [activeVodJob, setActiveVodJob] = useState<VodProgressEvent | null>(null)
+
+  const [twitchModalOpen, setTwitchModalOpen] = useState(false)
   const [twitchStatus, setTwitchStatus] = useState<TwitchStatus | null>(null)
   const [twitchStatusLoading, setTwitchStatusLoading] = useState(false)
-  const [twitchModalOpen, setTwitchModalOpen] = useState(false)
-  const [activeVodJob, setActiveVodJob] = useState<VodProgressEvent | null>(null)
-  const [vodModalOpen, setVodModalOpen] = useState(false)
 
   const loadStatus = useCallback(async () => {
     setStatusLoading(true)
@@ -93,9 +98,21 @@ export function App() {
       const data = await fetchSystemStatus()
       setSystemStatus(data)
     } catch (err) {
-      setStatusError(err instanceof Error ? err.message : 'Unable to reach StreamClippers API.')
+      setStatusError(err instanceof Error ? err.message : 'Status check failed.')
     } finally {
       setStatusLoading(false)
+    }
+  }, [])
+
+  const loadTwitchStatus = useCallback(async () => {
+    setTwitchStatusLoading(true)
+    try {
+      const data = await fetchTwitchStatus()
+      setTwitchStatus(data)
+    } catch {
+      // Keep studio usable even if Helix status check is offline
+    } finally {
+      setTwitchStatusLoading(false)
     }
   }, [])
 
@@ -103,11 +120,12 @@ export function App() {
     setChannelsLoading(true)
     setChannelsError(null)
     try {
-      const data = await fetchChannels()
-      setChannels(data)
+      const list = await fetchChannels()
+      setChannels(list)
       setSelectedChannelId((prev) => {
-        if (prev !== null && data.some((c) => c.id === prev)) return prev
-        return data[0]?.id ?? null
+        if (prev && list.some((c) => c.id === prev)) return prev
+        const active = list.find((c) => c.is_monitoring)
+        return active?.id ?? list[0]?.id ?? null
       })
     } catch (err) {
       setChannelsError(err instanceof Error ? err.message : 'Unable to load channels.')
@@ -120,58 +138,54 @@ export function App() {
     setClipsLoading(true)
     setClipsError(null)
     try {
-      const data = await fetchClips()
-      setClips(data)
+      const list = await fetchClips()
+      setClips(list)
       setSelectedClipId((prev) => {
-        if (prev !== null && data.some((c) => c.id === prev)) return prev
-        const firstPending = data.find((c) => c.status === 'pending_review')
-        return firstPending?.id ?? data[0]?.id ?? null
+        if (prev && list.some((c) => c.id === prev)) return prev
+        return list[0]?.id ?? null
       })
     } catch (err) {
-      setClipsError(err instanceof Error ? err.message : 'Unable to load clips.')
+      setClipsError(err instanceof Error ? err.message : 'Unable to load review clips.')
     } finally {
       setClipsLoading(false)
     }
   }, [])
 
-  const loadTwitchStatus = useCallback(async () => {
-    setTwitchStatusLoading(true)
-    try {
-      const data = await fetchTwitchStatus()
-      setTwitchStatus(data)
-    } catch {
-      // Studio remains operational when Twitch Helix is unconfigured or offline
-    } finally {
-      setTwitchStatusLoading(false)
-    }
-  }, [])
-
   useEffect(() => {
     void loadStatus()
+    void loadTwitchStatus()
     void loadChannels()
     void loadClips()
-    void loadTwitchStatus()
   }, [loadChannels, loadClips, loadStatus, loadTwitchStatus])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void loadStatus()
+    }, 10000)
+    return () => window.clearInterval(timer)
+  }, [loadStatus])
 
   const handleWsEvent = useCallback(
     (event: LiveSocketEvent) => {
       if (event.type === 'hype_tick') {
         const tick = event.payload
-        setLatestTicks((prev) => ({ ...prev, [tick.channel_id]: tick }))
+        const chId = tick.channel_id
+        setLatestTicks((prev) => ({ ...prev, [chId]: tick }))
         setTicksByChannel((prev) => {
-          const existing = prev[tick.channel_id] ?? []
-          const next = [...existing, tick].slice(-MAX_TICKS)
-          return { ...prev, [tick.channel_id]: next }
+          const existing = prev[chId] ?? []
+          const next = [...existing, tick].slice(-MAX_TICKS_PER_CHANNEL)
+          return { ...prev, [chId]: next }
         })
         return
       }
 
       if (event.type === 'chat_burst') {
-        const burst = event.payload
+        const chat = event.payload
+        const chId = chat.channel_id
         setChatByChannel((prev) => {
-          const existing = prev[burst.channel_id] ?? []
-          const next = [burst, ...existing].slice(0, MAX_CHAT)
-          return { ...prev, [burst.channel_id]: next }
+          const existing = prev[chId] ?? []
+          const next = [chat, ...existing].slice(0, MAX_CHAT_PER_CHANNEL)
+          return { ...prev, [chId]: next }
         })
         return
       }
@@ -179,39 +193,34 @@ export function App() {
       if (event.type === 'channel_metadata') {
         const meta = event.payload
         setMetadataByChannel((prev) => ({ ...prev, [meta.channel_id]: meta }))
-        if (meta.broadcaster_id) {
-          setChannels((prev) =>
-            prev.map((ch) =>
-              ch.id === meta.channel_id && !ch.broadcaster_id
-                ? { ...ch, broadcaster_id: meta.broadcaster_id }
-                : ch,
-            ),
-          )
-        }
         return
       }
 
       if (event.type === 'clip_created') {
         const clip = 'clip' in event.payload ? event.payload.clip : event.payload
-        const folderKey = getClipFolderKey(clip)
+        const clipFolderKey = getClipFolderKey(clip)
         setClips((prev) => {
-          const filtered = prev.filter((c) => c.id !== clip.id)
-          return [clip, ...filtered]
-        })
-        setSelectedFolderKey((prevKey) => {
-          if (prevKey !== folderKey) {
-            setSelectedClipId(clip.id)
+          const exists = prev.some((c) => c.id === clip.id)
+          if (exists) {
+            return prev.map((c) => (c.id === clip.id ? clip : c))
           }
-          return folderKey
+          return [clip, ...prev]
         })
-        setSelectedClipId((prev) => prev ?? clip.id)
+        setSelectedFolderKey((curr) => {
+          if (curr !== clipFolderKey) {
+            setSelectedClipId(clip.id)
+          } else {
+            setSelectedClipId((prevId) => prevId ?? clip.id)
+          }
+          return clipFolderKey
+        })
         void loadStatus()
         return
       }
 
       if (event.type === 'render_status') {
         const rs = event.payload
-        const nextError = rs.error_message ?? rs.error
+        const nextError = rs.error ?? rs.error_message
         setClips((prev) =>
           prev.map((c) =>
             c.id === rs.clip_id
@@ -342,16 +351,18 @@ export function App() {
     setClips((prev) => [created, ...prev.filter((c) => c.id !== created.id)])
     setSelectedFolderKey(getClipFolderKey(created))
     setSelectedClipId(created.id)
+    setActiveWorkspace('studio')
     void loadStatus()
   }
 
   const handleUpdateClip = async (clipId: string, payload: ClipUpdateInput) => {
     const updated = await updateClip(clipId, payload)
     const syncFraming =
-      payload.webcam_box !== undefined ||
-      payload.gameplay_box !== undefined ||
-      payload.layout_mode !== undefined ||
-      payload.split_ratio !== undefined
+      payload.sync_folder !== false &&
+      (payload.webcam_box !== undefined ||
+        payload.gameplay_box !== undefined ||
+        payload.layout_mode !== undefined ||
+        payload.split_ratio !== undefined)
     const targetFolderKey = getClipFolderKey(updated)
     setClips((prev) =>
       prev.map((c) => {
@@ -375,6 +386,20 @@ export function App() {
       }),
     )
     return updated
+  }
+
+  const handleDuplicateClip = async (clipId: string) => {
+    const duplicated = await duplicateClip(clipId)
+    setClips((prev) => {
+      const idx = prev.findIndex((c) => c.id === clipId)
+      if (idx === -1) return [duplicated, ...prev]
+      const next = [...prev]
+      next.splice(idx + 1, 0, duplicated)
+      return next
+    })
+    setSelectedClipId(duplicated.id)
+    void loadStatus()
+    return duplicated
   }
 
   const handleDetectWebcam = async (clipId: string) => {
@@ -482,6 +507,7 @@ export function App() {
     setSelectedFolderKey(getClipFolderKey(imported))
     setSelectedClipId(imported.id)
     setTwitchModalOpen(false)
+    setActiveWorkspace('studio')
     void loadStatus()
   }
 
@@ -523,6 +549,7 @@ export function App() {
   const handleSelectFolder = useCallback(
     (folderKey: string) => {
       setSelectedFolderKey(folderKey)
+      setActiveWorkspace('studio')
       if (folderKey === '__all__') return
       const matching = clips.filter(
         (c) => c.status !== 'discarded' && getClipFolderKey(c) === folderKey,
@@ -543,6 +570,8 @@ export function App() {
       </a>
 
       <TopBar
+        activeWorkspace={activeWorkspace}
+        onSelectWorkspace={setActiveWorkspace}
         systemStatus={systemStatus}
         statusLoading={statusLoading}
         statusError={statusError}
@@ -567,7 +596,9 @@ export function App() {
           clipFolders={clipFolders}
           activeFolderKey={activeFolderKey}
           onSelectFolder={handleSelectFolder}
-          onSelectChannel={setSelectedChannelId}
+          onSelectChannel={(id) => {
+            setSelectedChannelId(id)
+          }}
           onRetry={loadChannels}
           onCreateChannel={handleCreateChannel}
           onUpdateChannel={handleUpdateChannel}
@@ -580,31 +611,45 @@ export function App() {
         />
 
         <main id="main-workbench" className="desk-main">
-          <LiveRadarPanel
-            channel={selectedChannel}
-            ticks={selectedChannel ? (ticksByChannel[selectedChannel.id] ?? []) : []}
-            chatMessages={selectedChannel ? (chatByChannel[selectedChannel.id] ?? []) : []}
-          />
+          {activeWorkspace === 'radar' ? (
+            <LiveRadarPanel
+              channel={selectedChannel}
+              ticks={selectedChannel ? (ticksByChannel[selectedChannel.id] ?? []) : []}
+              chatMessages={selectedChannel ? (chatByChannel[selectedChannel.id] ?? []) : []}
+              onSwitchToEditor={() => setActiveWorkspace('studio')}
+            />
+          ) : (
+            <>
+              <LiveRadarPanel
+                compact
+                channel={selectedChannel}
+                ticks={selectedChannel ? (ticksByChannel[selectedChannel.id] ?? []) : []}
+                chatMessages={selectedChannel ? (chatByChannel[selectedChannel.id] ?? []) : []}
+                onExpandRadar={() => setActiveWorkspace('radar')}
+              />
 
-          <ReviewWorkbench
-            clips={clips}
-            clipFolders={clipFolders}
-            activeFolderKey={activeFolderKey}
-            onSelectFolder={handleSelectFolder}
-            loading={clipsLoading}
-            error={clipsError}
-            selectedClipId={selectedClipId}
-            onSelectClip={setSelectedClipId}
-            onRetryClips={loadClips}
-            onUpdateClip={handleUpdateClip}
-            onDetectWebcam={handleDetectWebcam}
-            onSavePreset={handleSavePreset}
-            onRenderClip={handleRenderClip}
-            onGenerateCaptions={handleGenerateCaptions}
-            onGenerateThumbnail={handleGenerateThumbnail}
-            onDeleteClip={handleDeleteClip}
-            onOpenVodModal={() => setVodModalOpen(true)}
-          />
+              <ReviewWorkbench
+                clips={clips}
+                clipFolders={clipFolders}
+                activeFolderKey={activeFolderKey}
+                onSelectFolder={handleSelectFolder}
+                loading={clipsLoading}
+                error={clipsError}
+                selectedClipId={selectedClipId}
+                onSelectClip={setSelectedClipId}
+                onRetryClips={loadClips}
+                onUpdateClip={handleUpdateClip}
+                onDuplicateClip={handleDuplicateClip}
+                onDetectWebcam={handleDetectWebcam}
+                onSavePreset={handleSavePreset}
+                onRenderClip={handleRenderClip}
+                onGenerateCaptions={handleGenerateCaptions}
+                onGenerateThumbnail={handleGenerateThumbnail}
+                onDeleteClip={handleDeleteClip}
+                onOpenVodModal={() => setVodModalOpen(true)}
+              />
+            </>
+          )}
         </main>
       </div>
 
@@ -645,4 +690,6 @@ export function App() {
     </div>
   )
 }
+
 export default App
+

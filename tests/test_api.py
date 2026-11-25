@@ -449,6 +449,64 @@ class TestClipWorkflowApi:
         assert not export_path.exists()
         assert not export_thumb_path.exists()
 
+    def test_per_clip_crop_isolation_and_duplicate_cut(
+        self, api_client: tuple[TestClient, object, Settings]
+    ) -> None:
+        client, app, settings = api_client
+
+        raw_clip_path = settings.clips_dir / "dup_source_clip.mp4"
+        _synthesize_test_mp4(settings.ffmpeg_path, raw_clip_path, duration_sec=2.0)
+
+        first_id = "clip-per-edit-001"
+        with app.state.session_factory() as session:
+            clip = ClipItem(
+                id=first_id,
+                channel_id=None,
+                channel_login="streamer",
+                source_type="youtube_vod",
+                source_ref="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                title="Original Cut",
+                status="pending_review",
+                hype_score=80.0,
+                trigger_reason="viral",
+                raw_video_path=str(raw_clip_path),
+                duration_sec=2.0,
+                trim_start_sec=0.0,
+                trim_end_sec=2.0,
+            )
+            session.add(clip)
+            session.commit()
+
+        dup_resp = client.post(f"/api/clips/{first_id}/duplicate")
+        assert dup_resp.status_code == 201
+        dup_data = dup_resp.json()
+        dup_id = dup_data["id"]
+        assert dup_id != first_id
+        assert "(Cut)" in dup_data["title"]
+        assert Path(dup_data["raw_video_path"]).is_file()
+        assert Path(dup_data["raw_video_path"]) != raw_clip_path
+
+        # Editing duplicate with sync_folder=False leaves original clip untouched
+        patch_dup = client.patch(
+            f"/api/clips/{dup_id}",
+            json={
+                "title": "Custom Cut 2",
+                "layout_mode": "blur_no_cam",
+                "split_ratio": 0.50,
+                "sync_folder": False,
+            },
+        )
+        assert patch_dup.status_code == 200
+        assert patch_dup.json()["layout_mode"] == "blur_no_cam"
+
+        orig_after = client.get(f"/api/clips/{first_id}").json()
+        assert orig_after["layout_mode"] == "split_top_cam"
+        assert orig_after["title"] == "Original Cut"
+
+        # Deleting duplicate leaves original raw video intact
+        assert client.delete(f"/api/clips/{dup_id}").status_code == 200
+        assert raw_clip_path.is_file()
+
     def test_caption_position_seam_patch_and_render(
         self,
         api_client: tuple[TestClient, object, Settings],

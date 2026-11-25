@@ -285,6 +285,7 @@ class ClipUpdate(BaseModel):
     gameplay_box: CropBox | dict[str, Any] | None = None
     webcam_box_json: str | None = None
     gameplay_box_json: str | None = None
+    sync_folder: bool = True
 
 
 class ClipRead(BaseModel):

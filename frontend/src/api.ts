@@ -526,6 +526,12 @@ export function deleteClip(clipId: string): Promise<void> {
   })
 }
 
+export function duplicateClip(clipId: string): Promise<ClipItem> {
+  return requestJson<ClipItem>(`/api/clips/${clipId}/duplicate`, {
+    method: 'POST',
+  })
+}
+
 export function detectClipWebcam(clipId: string): Promise<ClipItem> {
   return requestJson<ClipItem>(`/api/clips/${clipId}/detect-webcam`, {
     method: 'POST',
