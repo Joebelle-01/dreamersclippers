@@ -10,6 +10,7 @@ import {
   Copy,
   Download,
   Film,
+  Flame,
   FolderOpen,
   Image,
   Layers,
@@ -106,8 +107,8 @@ function clampBox(box: CropBox): CropBox {
 }
 
 function formatStatusLabel(status: ClipStatus): string {
-  if (status === 'pending_review') return 'Ready to Edit'
-  if (status === 'rendering') return 'Rendering...'
+  if (status === 'pending_review') return 'Ready to edit'
+  if (status === 'rendering') return 'Rendering…'
   if (status === 'exported') return 'Exported'
   if (status === 'failed') return 'Failed'
   return 'Discarded'
@@ -143,14 +144,14 @@ function buildContextHookText(clip: ClipItem, captions: CaptionSegment[]): strin
     .trim()
 
   if (spoken.length >= 8) {
-    const trimmed = spoken.length > 52 ? `${spoken.slice(0, 49).trimEnd()}...` : spoken
+    const trimmed = spoken.length > 52 ? `${spoken.slice(0, 49).trimEnd()}…` : spoken
     return `@${login}: "${trimmed}"`
   }
   const cleanTitle = cleanHookSourceTitle(clip.title, login)
   if (cleanTitle) {
     return cleanTitle
   }
-  return `@${login} reacts live to this moment 👀`
+  return `@${login} reacts live to this moment`
 }
 
 function buildExaggeratedHookText(
@@ -163,21 +164,21 @@ function buildExaggeratedHookText(
   const shortQuote =
     firstLine.length >= 6
       ? firstLine.length > 32
-        ? `${firstLine.slice(0, 29).trimEnd()}...`
+        ? `${firstLine.slice(0, 29).trimEnd()}…`
         : firstLine
       : ''
 
   const templates = [
-    `Wait for @${login}'s reaction at the end 😭🔥`,
-    `Bro really couldn't believe what just happened 💀🔥`,
+    `Wait for @${login}'s reaction at the end`,
+    `Bro really couldn't believe what just happened`,
     shortQuote
-      ? `"${shortQuote}" — nobody saw THIS coming 🤯🔥`
-      : `Nobody expected THIS to happen on stream 🤯🔥`,
-    `POV: Everything goes sideways in 5 seconds 😭💀`,
-    `Chat lost their minds when @${login} did this 🔥👀`,
-    `This might be the wildest clip of the week 🤯💀`,
-    `Watch @${login}'s face the second it happens 😭🔥`,
-    `0% chance anyone recovers from this moment 💀🔥`,
+      ? `"${shortQuote}": nobody saw THIS coming`
+      : `Nobody expected THIS to happen on stream`,
+    `POV: Everything goes sideways in 5 seconds`,
+    `Chat lost their minds when @${login} did this`,
+    `This might be the wildest clip of the week`,
+    `Watch @${login}'s face the second it happens`,
+    `Zero chance anyone recovers from this moment`,
   ]
   return templates[Math.abs(variant) % templates.length]
 }
@@ -353,6 +354,13 @@ export function ReviewWorkbench({
     const mutedColor = styles.getPropertyValue('--color-muted').trim() || bodyStyle.color
     const inkColor = styles.getPropertyValue('--color-ink').trim() || bodyStyle.color
     const accentColor = styles.getPropertyValue('--color-accent').trim() || inkColor
+    const bodyFont = styles.getPropertyValue('--font-body').trim() || bodyStyle.fontFamily
+    const hookWhite = styles.getPropertyValue('--color-hook-white').trim() || inkColor
+    const hookDark = styles.getPropertyValue('--color-hook-dark').trim() || bgPaper
+    const hookGold = styles.getPropertyValue('--color-hook-gold').trim() || accentColor
+    const hookViolet = styles.getPropertyValue('--color-hook-violet').trim() || accentColor
+    const hookInkDark = styles.getPropertyValue('--color-hook-ink-dark').trim() || bgPaper
+    const canvasShadow = styles.getPropertyValue('--color-canvas-shadow').trim() || bgPaper
 
     const drawHookBanner = (seamY?: number) => {
       const trimmedHook = hookText.trim()
@@ -362,7 +370,7 @@ export function ReviewWorkbench({
 
       ctx.save()
       const fontSize = 12.5
-      ctx.font = `700 ${fontSize}px "Plus Jakarta Sans", "Segoe UI Emoji", sans-serif`
+      ctx.font = `700 ${fontSize}px ${bodyFont}`
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
 
@@ -382,7 +390,7 @@ export function ReviewWorkbench({
       if (cur) rawLines.push(cur)
       const lines = rawLines.slice(0, 2)
       if (rawLines.length > 2 && lines[1]) {
-        lines[1] = `${lines[1].slice(0, Math.max(8, lines[1].length - 3)).trimEnd()}...`
+        lines[1] = `${lines[1].slice(0, Math.max(8, lines[1].length - 3)).trimEnd()}…`
       }
 
       const lineHeight = 16
@@ -395,20 +403,20 @@ export function ReviewWorkbench({
       const pillX = Math.round(centerX - pillW / 2)
       const pillY = Math.round(centerY - pillH / 2)
 
-      let fill = '#ffffff'
-      let textFill = '#0f1115'
+      let fill = hookWhite
+      let textFill = hookInkDark
       if (hookStyle === 'dark_glass') {
-        fill = 'rgba(14, 18, 26, 0.92)'
-        textFill = '#f8fafc'
+        fill = hookDark
+        textFill = inkColor
       } else if (hookStyle === 'viral_gold') {
-        fill = '#facc15'
-        textFill = '#0f1115'
+        fill = hookGold
+        textFill = hookInkDark
       } else if (hookStyle === 'studio_violet') {
-        fill = '#7c5cfc'
-        textFill = '#ffffff'
+        fill = hookViolet
+        textFill = inkColor
       }
 
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.42)'
+      ctx.shadowColor = canvasShadow
       ctx.shadowBlur = 8
       ctx.shadowOffsetY = 2
       ctx.fillStyle = fill
@@ -416,7 +424,6 @@ export function ReviewWorkbench({
       ctx.roundRect(pillX, pillY, pillW, pillH, 7)
       ctx.fill()
 
-      ctx.shadowColor = 'transparent'
       ctx.shadowBlur = 0
       ctx.shadowOffsetY = 0
       ctx.fillStyle = textFill
@@ -448,7 +455,7 @@ export function ReviewWorkbench({
             : Math.round(ch * 0.81)
       const fontSize = captionStyle === 'bold_pop' ? 16 : 15
       ctx.save()
-      ctx.font = `700 ${fontSize}px "Plus Jakarta Sans", sans-serif`
+      ctx.font = `700 ${fontSize}px ${bodyFont}`
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
 
@@ -531,9 +538,9 @@ export function ReviewWorkbench({
       ctx.lineWidth = 1
       ctx.strokeRect(16.5, 16.5, cw - 33, ch - 33)
       ctx.fillStyle = mutedColor
-      ctx.font = '13px "Plus Jakarta Sans", sans-serif'
+      ctx.font = `13px ${bodyFont}`
       ctx.textAlign = 'center'
-      ctx.fillText(videoError ? 'Source stream unavailable' : 'Loading 9:16 vertical stage...', cw / 2, ch / 2)
+      ctx.fillText(videoError ? 'Source stream unavailable' : 'Loading 9:16 vertical stage…', cw / 2, ch / 2)
       return
     }
 
@@ -944,7 +951,7 @@ export function ReviewWorkbench({
       const dup = await onDuplicateClip(selectedClip.id)
       setActionFeedback({
         kind: 'success',
-        text: `Created independent duplicate "${dup.title}" — trim or crop it freely.`,
+        text: `Created independent duplicate "${dup.title}": trim or crop it freely.`,
       })
     } catch (err) {
       setActionFeedback({
@@ -1188,13 +1195,12 @@ export function ReviewWorkbench({
 
   return (
     <section aria-labelledby="workbench-heading" className="flex-1 flex flex-col min-w-0 bg-paper">
-      {/* Studio Workbench Toolbar */}
-      <div className="border-b border-rule bg-paper-2/75 px-4 py-2.5 flex items-center justify-between gap-4 flex-wrap">
+      <div className="border-b border-rule well px-4 py-2 flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2">
-            <Film size={16} className="text-accent shrink-0" aria-hidden="true" />
-            <h2 id="workbench-heading" className="section-title !text-base">
-              Clip Studio
+            <Film size={15} className="text-accent shrink-0" aria-hidden="true" />
+            <h2 id="workbench-heading" className="section-title">
+              Cut console
             </h2>
           </div>
 
@@ -1205,16 +1211,16 @@ export function ReviewWorkbench({
                 aria-label="Active video folder"
                 value={activeFolderKey}
                 onChange={(e) => onSelectFolder(e.target.value)}
-                className="field-select !min-h-[34px] text-xs font-medium min-w-[210px]"
+                className="field-select w-auto min-h-[32px] text-xs font-medium min-w-[168px] max-w-[232px]"
               >
                 {clipFolders.map((folder) => (
                   <option key={folder.key} value={folder.key}>
-                    {folder.label} ({folder.clipCount} clips)
+                    {folder.label} ({folder.clipCount})
                   </option>
                 ))}
                 {clipFolders.length > 1 && (
                   <option value="__all__">
-                    All Video Folders ({clips.filter((c) => c.status !== 'discarded').length} clips)
+                    All folders ({clips.filter((c) => c.status !== 'discarded').length})
                   </option>
                 )}
               </select>
@@ -1227,20 +1233,19 @@ export function ReviewWorkbench({
               disabled={batchRenderBusy}
               aria-busy={batchRenderBusy}
               onClick={handleBatchRenderFolder}
-              className="btn btn--compact btn--accent-outline"
+              className="btn btn--compact btn--quiet"
             >
               {batchRenderBusy ? (
                 <span className="desk-spinner" aria-hidden="true" />
               ) : (
                 <Sparkles size={13} aria-hidden="true" />
               )}
-              <span>Render All Pending ({counts.pending_review})</span>
+              <span>Batch ({counts.pending_review})</span>
             </button>
           )}
         </div>
 
-        <div className="flex items-center gap-3 flex-wrap">
-          {/* Prev / Next Clip Stepper so you can edit every clip sequentially */}
+        <div className="flex items-center gap-2.5 flex-wrap">
           {filteredClips.length > 1 && (
             <div className="flex items-center gap-1.5">
               <button
@@ -1298,33 +1303,31 @@ export function ReviewWorkbench({
         </div>
       </div>
 
-      {/* Main Split Body: Left Vertical Clip Bin + Right Dual-Monitor NLE Stage */}
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-[276px_minmax(0,1fr)] min-h-0">
-        {/* Left Vertical Clip Stack */}
         <aside
           aria-label="Active video folder clips"
-          className="border-b lg:border-b-0 lg:border-r border-rule bg-paper p-3 flex flex-col gap-2.5"
+          className="border-b lg:border-b-0 lg:border-r border-rule bg-paper flex flex-col"
         >
-          <div className="flex items-center justify-between gap-2 pb-2 border-b border-rule">
-            <span className="eyebrow-label !text-ink truncate">
-              {activeFolderObj ? activeFolderObj.label : 'All Clips'}
+          <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-rule">
+            <span className="text-xs font-medium text-ink truncate">
+              {activeFolderObj ? activeFolderObj.label : 'All clips'}
             </span>
-            <span className="studio-pill studio-pill--accent !py-0 !px-2 num">
+            <span className="status-tag num">
               {filteredClips.length} clip{filteredClips.length === 1 ? '' : 's'}
             </span>
           </div>
 
           {loading && clips.length === 0 ? (
-            <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading clips">
+            <div className="p-3 flex flex-col gap-2" aria-busy="true" aria-label="Loading clips">
               {[1, 2, 3].map((n) => (
-                <div key={n} className="studio-card h-16 p-2.5">
-                  <div className="h-3 rounded bg-paper-3 w-1/2 mb-2" />
-                  <div className="h-2 rounded bg-paper-3 w-3/4" />
+                <div key={n} className="well h-16 p-3">
+                  <div className="h-3 bg-paper-3 w-1/2 mb-2" />
+                  <div className="h-2 bg-paper-3 w-3/4" />
                 </div>
               ))}
             </div>
           ) : error && clips.length === 0 ? (
-            <div className="studio-card p-3 border-error flex flex-col gap-2">
+            <div className="p-4 flex flex-col gap-2">
               <p className="text-xs text-error">{error}</p>
               <button type="button" onClick={onRetryClips} className="btn btn--quiet btn--compact">
                 <RefreshCw size={13} aria-hidden="true" />
@@ -1332,10 +1335,10 @@ export function ReviewWorkbench({
               </button>
             </div>
           ) : filteredClips.length === 0 ? (
-            <div className="studio-card p-3.5 flex flex-col gap-2.5">
-              <p className="text-xs font-semibold text-ink">
+            <div className="p-4 flex flex-col gap-3">
+              <p className="text-xs font-medium text-ink">
                 {filter === 'pending_review'
-                  ? 'All clips in this folder are exported!'
+                  ? 'All clips in this folder are exported.'
                   : filter === 'exported'
                     ? 'No exported clips in this folder yet.'
                     : 'No clips in this folder yet.'}
@@ -1344,23 +1347,23 @@ export function ReviewWorkbench({
                 <button
                   type="button"
                   onClick={() => setFilter('all')}
-                  className="btn btn--compact btn--accent-outline w-full"
+                  className="btn btn--compact btn--quiet w-full"
                 >
-                  Show All {folderClips.length} Clips to Edit
+                  Show all {folderClips.length} clips
                 </button>
               ) : (
                 <button
                   type="button"
                   onClick={onOpenVodModal}
-                  className="btn btn--compact btn--primary w-full"
+                  className="btn btn--compact btn--quiet w-full"
                 >
                   <Video size={14} aria-hidden="true" />
-                  <span>Analyze Video</span>
+                  <span>Analyze video</span>
                 </button>
               )}
             </div>
           ) : (
-            <div className="flex flex-col gap-2 max-h-[820px] overflow-y-auto pr-0.5">
+            <div className="flex flex-col max-h-[820px] overflow-y-auto">
               {filteredClips.map((clip, idx) => {
                 const active = selectedClip?.id === clip.id
                 const clipDur = Math.max(
@@ -1368,54 +1371,57 @@ export function ReviewWorkbench({
                   (clip.trim_end_sec || clip.duration_sec) - (clip.trim_start_sec || 0),
                 )
                 return (
-                  <button
-                    key={clip.id}
-                    type="button"
-                    data-selected={active ? 'true' : 'false'}
-                    onClick={() => onSelectClip(clip.id)}
-                    className="interactive-row w-full p-2.5 flex items-center gap-2.5 text-left"
-                  >
-                    <div className="relative w-16 h-11 rounded-md bg-inset border border-rule shrink-0 overflow-hidden flex items-center justify-center">
-                      {clip.thumbnail_path ? (
-                        <img
-                          src={thumbImageUrl(clip.id)}
-                          alt=""
-                          width={160}
-                          height={90}
-                          onError={(e) => {
-                            e.currentTarget.hidden = true
-                          }}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <Film size={15} className="text-muted" aria-hidden="true" />
-                      )}
-                      <span className="absolute bottom-0.5 right-0.5 px-1 rounded bg-black/75 text-[10px] num text-white">
-                        #{idx + 1}
-                      </span>
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-1.5">
-                        <span className="text-xs font-semibold text-ink truncate">
-                          {clip.title}
+                    <button
+                      key={clip.id}
+                      type="button"
+                      title={clip.title}
+                      data-selected={active ? 'true' : 'false'}
+                      onClick={() => onSelectClip(clip.id)}
+                      className="interactive-row w-full px-3 py-1.5 flex items-center gap-2.5 text-left"
+                    >
+                      <div className="relative w-14 h-9 bg-inset border border-rule shrink-0 overflow-hidden flex items-center justify-center">
+                        {clip.thumbnail_path ? (
+                          <img
+                            src={thumbImageUrl(clip.id)}
+                            alt=""
+                            width={160}
+                            height={90}
+                            onError={(e) => {
+                              e.currentTarget.hidden = true
+                            }}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <Film size={14} className="text-muted" aria-hidden="true" />
+                        )}
+                        <span className="absolute bottom-0 right-0 px-1 bg-paper-3 text-xs num text-ink leading-none py-0.5">
+                          #{idx + 1}
                         </span>
-                        <span className="num text-xs font-semibold text-accent shrink-0">
+                      </div>
+                      <div className="min-w-0 flex-1 overflow-hidden">
+                        <div className="flex items-center justify-between gap-2 min-w-0">
+                          <span className="block text-xs font-medium text-ink leading-tight truncate min-w-0 flex-1">
+                            {clip.title.length > 25
+                              ? `${clip.title.slice(0, 24).trimEnd()}…`
+                              : clip.title}
+                          </span>
+                        <span className="num text-xs font-medium text-accent leading-tight shrink-0 pl-1">
                           {clip.hype_score.toFixed(0)}
                         </span>
                       </div>
-                      <div className="flex items-center justify-between text-[11px] text-muted mt-1">
+                      <div className="flex items-center justify-between gap-2 text-xs text-muted leading-tight mt-0.5 min-w-0">
                         <span
-                          className={
+                          className={`block truncate min-w-0 flex-1 ${
                             clip.status === 'exported'
-                              ? 'text-emerald-400 font-medium'
+                              ? 'text-success font-medium'
                               : clip.status === 'rendering'
                                 ? 'text-accent font-medium'
                                 : 'text-muted'
-                          }
+                          }`}
                         >
                           {formatStatusLabel(clip.status)}
                         </span>
-                        <span className="num shrink-0 ml-1">{formatTimecode(clipDur)}</span>
+                        <span className="num shrink-0 pl-1">{formatTimecode(clipDur)}</span>
                       </div>
                     </div>
                   </button>
@@ -1425,13 +1431,11 @@ export function ReviewWorkbench({
           )}
         </aside>
 
-        {/* Right Dual-Stage NLE Editor */}
         {selectedClip ? (
-          <div className="p-4 lg:p-5 flex flex-col gap-4 min-w-0">
-            {/* Editable Clip Title & Per-Clip Framing Mode Bar */}
-            <div className="studio-card p-3.5 flex items-center justify-between gap-4 flex-wrap">
-              <div className="flex-1 min-w-[240px] flex flex-col gap-1.5">
-                <div className="flex items-center gap-2 flex-wrap">
+          <div className="p-4 lg:p-6 flex flex-col gap-5 min-w-0">
+            <div className="pb-4 border-b border-rule flex flex-col gap-2.5">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2 flex-1 min-w-[240px]">
                   <input
                     type="text"
                     aria-label="Editable clip title"
@@ -1446,135 +1450,138 @@ export function ReviewWorkbench({
                         e.currentTarget.blur()
                       }
                     }}
-                    className="field-input !min-h-[36px] !text-base font-semibold max-w-xl"
+                    className="field-input flex-1 min-w-0 max-w-xl min-h-[36px] text-base font-medium"
                   />
                   {titleDirty && (
                     <button
                       type="button"
                       disabled={titleSaving}
                       onClick={() => void handleSaveTitle()}
-                      className="btn btn--compact btn--accent-outline"
+                      className="btn btn--compact btn--quiet shrink-0"
                     >
                       <Check size={13} aria-hidden="true" />
-                      <span>{titleSaving ? 'Saving' : 'Save Title'}</span>
+                      <span>{titleSaving ? 'Saving…' : 'Save title'}</span>
                     </button>
                   )}
-                  <span className="studio-pill">{formatSourceBadge(selectedClip.source_type)}</span>
+                </div>
+
+                <div className="flex items-center gap-3 flex-wrap text-xs text-muted">
+                  <span className="status-tag status-tag--ready">
+                    {formatSourceBadge(selectedClip.source_type)}
+                  </span>
                   <span
-                    className={`studio-pill ${
+                    className={`status-tag pl-3 border-l border-rule ${
                       selectedClip.status === 'exported'
-                        ? 'studio-pill--success'
+                        ? 'status-tag--ready'
                         : selectedClip.status === 'failed'
-                          ? 'studio-pill--danger'
+                          ? 'status-tag--alert'
                           : selectedClip.status === 'rendering'
-                            ? 'studio-pill--accent'
+                            ? 'status-tag--live'
                             : ''
                     }`}
                   >
                     {formatStatusLabel(selectedClip.status)}
                   </span>
+                  <span className="pl-3 border-l border-rule">@{selectedClip.channel_login}</span>
+                  <span className="pl-3 border-l border-rule">
+                    Score <strong className="num text-ink-2">{selectedClip.hype_score.toFixed(1)}</strong>
+                  </span>
                 </div>
-
-                <p className="text-xs text-muted">
-                  @{selectedClip.channel_login} · {selectedClip.trigger_reason || 'manual cut'} · score{' '}
-                  <strong className="num text-ink-2">{selectedClip.hype_score.toFixed(1)}</strong> ·
-                  Shortcuts: <code className="num text-ink-2">Space</code> Play,{' '}
-                  <code className="num text-ink-2">[</code> Set In,{' '}
-                  <code className="num text-ink-2">]</code> Set Out
-                </p>
               </div>
 
-              <div className="flex items-center gap-2 flex-wrap">
-                {/* Per-Clip Crop Lock vs Sync Folder Toggle */}
-                <div
-                  className="seg-group grid-cols-2"
-                  role="group"
-                  aria-label="Crop edit scope"
-                  title="Choose whether crop changes apply only to this clip or sync across the folder"
-                >
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div
+                    className="seg-group grid-cols-2"
+                    role="group"
+                    aria-label="Crop edit scope"
+                    title="Choose whether crop changes apply only to this clip or sync across the folder"
+                  >
+                    <button
+                      type="button"
+                      aria-pressed={!syncFolderCrop}
+                      onClick={() => setSyncFolderCrop(false)}
+                      className="seg-cell flex items-center gap-1.5"
+                    >
+                      <Lock size={12} aria-hidden="true" />
+                      <span>This clip</span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={syncFolderCrop}
+                      onClick={() => setSyncFolderCrop(true)}
+                      className="seg-cell flex items-center gap-1.5"
+                    >
+                      <Layers size={12} aria-hidden="true" />
+                      <span>Sync folder</span>
+                    </button>
+                  </div>
+
                   <button
                     type="button"
-                    aria-pressed={!syncFolderCrop}
-                    onClick={() => setSyncFolderCrop(false)}
-                    className="seg-cell flex items-center gap-1.5"
+                    disabled={duplicateBusy}
+                    aria-busy={duplicateBusy}
+                    onClick={handleDuplicate}
+                    title="Clone this clip to create another cut from the same video"
+                    className="btn btn--compact btn--quiet"
                   >
-                    <Lock size={12} aria-hidden="true" />
-                    <span>This Clip Only</span>
+                    {duplicateBusy ? (
+                      <span className="desk-spinner" aria-hidden="true" />
+                    ) : (
+                      <Copy size={13} aria-hidden="true" />
+                    )}
+                    <span>Duplicate</span>
                   </button>
+
                   <button
                     type="button"
-                    aria-pressed={syncFolderCrop}
-                    onClick={() => setSyncFolderCrop(true)}
-                    className="seg-cell flex items-center gap-1.5"
+                    disabled={detectBusy}
+                    aria-busy={detectBusy}
+                    onClick={handleDetectWebcam}
+                    className="btn btn--compact btn--quiet"
                   >
-                    <Layers size={12} aria-hidden="true" />
-                    <span>Sync Folder</span>
+                    {detectBusy ? (
+                      <span className="desk-spinner" aria-hidden="true" />
+                    ) : (
+                      <ScanFace size={14} aria-hidden="true" />
+                    )}
+                    <span>{detectBusy ? 'Detecting…' : 'Auto-cam'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={presetBusy}
+                    aria-busy={presetBusy}
+                    onClick={handleSavePreset}
+                    className="btn btn--compact btn--quiet"
+                  >
+                    {presetBusy ? (
+                      <span className="desk-spinner" aria-hidden="true" />
+                    ) : (
+                      <BookmarkPlus size={14} aria-hidden="true" />
+                    )}
+                    <span>{presetBusy ? 'Applying…' : 'Apply crop'}</span>
                   </button>
                 </div>
 
-                <button
-                  type="button"
-                  disabled={duplicateBusy}
-                  aria-busy={duplicateBusy}
-                  onClick={handleDuplicate}
-                  title="Clone this clip to create another cut from the same video"
-                  className="btn btn--compact btn--quiet"
-                >
-                  {duplicateBusy ? (
-                    <span className="desk-spinner" aria-hidden="true" />
-                  ) : (
-                    <Copy size={13} aria-hidden="true" />
-                  )}
-                  <span>Duplicate Cut</span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={detectBusy}
-                  aria-busy={detectBusy}
-                  onClick={handleDetectWebcam}
-                  className="btn btn--compact btn--quiet"
-                >
-                  {detectBusy ? (
-                    <span className="desk-spinner" aria-hidden="true" />
-                  ) : (
-                    <ScanFace size={14} aria-hidden="true" />
-                  )}
-                  <span>{detectBusy ? 'Detecting' : 'Auto-Cam'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={presetBusy}
-                  aria-busy={presetBusy}
-                  onClick={handleSavePreset}
-                  className="btn btn--compact btn--quiet"
-                >
-                  {presetBusy ? (
-                    <span className="desk-spinner" aria-hidden="true" />
-                  ) : (
-                    <BookmarkPlus size={14} aria-hidden="true" />
-                  )}
-                  <span>{presetBusy ? 'Applying' : 'Apply Crop to Folder'}</span>
-                </button>
+                <span className="hidden md:inline text-xs text-muted">
+                  Keys: <code className="num text-ink-2">Space</code> play,{' '}
+                  <code className="num text-ink-2">[</code> in,{' '}
+                  <code className="num text-ink-2">]</code> out
+                </span>
               </div>
             </div>
 
-            {/* Dual-Monitor Stage: 16:9 Source Crop Monitor + Synced 9:16 Vertical Inspector */}
-            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_336px] gap-4 items-start">
-              {/* Left Monitor Column: 16:9 Source Video + NLE Timeline Scrubber */}
-              <div className="flex flex-col gap-3 min-w-0">
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_336px] gap-6 items-start">
+              <div className="flex flex-col gap-4 min-w-0">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="flex items-center gap-2">
-                    <span className="eyebrow-label !text-ink-2">
-                      16:9 Source Canvas
-                    </span>
-                    <span className="text-xs text-muted">
-                      (drag boxes or use arrow keys · editing{' '}
-                      <strong className="text-accent">
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-medium text-ink">16:9 source frame</span>
+                    <span className="text-xs text-muted pl-3 border-l border-rule">
+                      Editing{' '}
+                      <strong className="text-accent font-medium">
                         {syncFolderCrop ? 'all pending clips in folder' : 'this clip individually'}
                       </strong>
-                      )
                     </span>
                   </div>
 
@@ -1587,16 +1594,16 @@ export function ReviewWorkbench({
                         setIsPlaying(false)
                         setVideoError(null)
                       }}
-                      className="btn btn--compact btn--accent-outline"
+                      className="btn btn--compact btn--quiet"
                     >
-                      {previewExported ? 'Edit 16:9 Crop & Trim' : 'Preview Rendered 9:16'}
+                      {previewExported ? 'Edit 16:9 crop' : 'Preview rendered 9:16'}
                     </button>
                   )}
                 </div>
 
                 <div
                   ref={stageRef}
-                  className="relative w-full aspect-video rounded-xl bg-inset border border-rule overflow-hidden shadow-lg"
+                  className="relative w-full aspect-video bg-inset overflow-hidden"
                 >
                   <video
                     ref={videoRef}
@@ -1630,7 +1637,6 @@ export function ReviewWorkbench({
 
                   {!previewExported && (
                     <div className="absolute inset-0">
-                      {/* Gameplay Crop Overlay (Cyan) */}
                       <div
                         role="region"
                         tabIndex={0}
@@ -1647,7 +1653,7 @@ export function ReviewWorkbench({
                           height: `${gameplayBox.h * 100}%`,
                         }}
                       >
-                        <span className="inline-block px-2 py-0.5 rounded-br bg-inset/90 text-signal-game text-[11px] font-semibold pointer-events-none">
+                        <span className="inline-block px-2 py-0.5 bg-paper text-signal-game text-xs font-medium pointer-events-none">
                           Gameplay
                         </span>
                         <div
@@ -1659,7 +1665,6 @@ export function ReviewWorkbench({
                         />
                       </div>
 
-                      {/* Webcam Crop Overlay (Electric Violet) */}
                       {layoutMode === 'split_top_cam' && (
                         <div
                           role="region"
@@ -1677,7 +1682,7 @@ export function ReviewWorkbench({
                             height: `${webcamBox.h * 100}%`,
                           }}
                         >
-                          <span className="inline-block px-2 py-0.5 rounded-br bg-accent text-white text-[11px] font-semibold pointer-events-none">
+                          <span className="inline-block px-2 py-0.5 bg-accent text-accent-ink text-xs font-medium pointer-events-none">
                             Webcam
                           </span>
                           <div
@@ -1693,14 +1698,13 @@ export function ReviewWorkbench({
                   )}
                 </div>
 
-                {/* Precision NLE Transport + Dual Trim Scrubber */}
-                <div className="studio-card p-3.5 flex flex-col gap-3">
-                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="well p-4 flex flex-col gap-3">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div className="flex items-center gap-2 flex-wrap">
                       <button
                         type="button"
                         onClick={() => void togglePlayback()}
-                        className="btn btn--compact btn--primary !min-h-[34px] !px-3.5"
+                        className="btn btn--compact btn--quiet px-3"
                       >
                         {isPlaying ? <Pause size={14} aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
                         <span>{isPlaying ? 'Pause' : 'Play'}</span>
@@ -1709,7 +1713,7 @@ export function ReviewWorkbench({
                       <button
                         type="button"
                         onClick={() => seekTo(currentTime - 1)}
-                        className="btn btn--compact btn--quiet !px-2 num"
+                        className="btn btn--compact btn--quiet px-2 num"
                         title="Step back 1 second (J)"
                       >
                         -1s
@@ -1717,7 +1721,7 @@ export function ReviewWorkbench({
                       <button
                         type="button"
                         onClick={() => seekTo(currentTime + 1)}
-                        className="btn btn--compact btn--quiet !px-2 num"
+                        className="btn btn--compact btn--quiet px-2 num"
                         title="Step forward 1 second (L)"
                       >
                         +1s
@@ -1748,20 +1752,21 @@ export function ReviewWorkbench({
                               setPlaybackRate(rate)
                               if (videoRef.current) videoRef.current.playbackRate = rate
                             }}
-                            className="seg-cell !min-h-[26px] !px-2 num"
+                            className="seg-cell px-2 num"
                           >
                             {rate}x
                           </button>
                         ))}
                       </div>
-
-                      <span className="num text-xs text-ink-2 pl-1">
-                        {formatTimecode(currentTime)} / {formatTimecode(effectiveDur)}
-                      </span>
                     </div>
 
-                    {/* In / Out Razor Trim Controls */}
-                    <div className="flex items-center gap-2 flex-wrap text-xs">
+                    <span className="num text-xs text-ink-2 shrink-0">
+                      {formatTimecode(currentTime)} / {formatTimecode(effectiveDur)}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 flex-wrap pt-2 border-t border-rule text-xs">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <button
                         type="button"
                         onClick={handleSetInAtPlayhead}
@@ -1783,15 +1788,11 @@ export function ReviewWorkbench({
                         <strong className="num text-ink">{formatTimecode(trimEnd)}</strong>
                       </button>
 
-                      <span className="studio-pill studio-pill--accent num">
-                        Cut {formatTimecode(trimEnd - trimStart)}
-                      </span>
-
                       {(trimStart > 0.1 || trimEnd < effectiveDur - 0.1) && (
                         <button
                           type="button"
                           onClick={handleResetTrim}
-                          className="btn btn--compact btn--ghost !px-2"
+                          className="btn btn--compact btn--ghost px-2"
                           title="Reset trim to full clip duration"
                         >
                           <RotateCcw size={12} aria-hidden="true" />
@@ -1799,10 +1800,13 @@ export function ReviewWorkbench({
                         </button>
                       )}
                     </div>
+
+                    <span className="status-tag status-tag--live num">
+                      Cut {formatTimecode(trimEnd - trimStart)}
+                    </span>
                   </div>
 
-                  {/* Waveform / Hype Timeline + Dual Trim Handles */}
-                  <div className="relative h-14 rounded-lg border border-rule bg-inset overflow-hidden">
+                  <div className="relative h-14 bg-inset overflow-hidden">
                     <svg
                       viewBox="0 0 640 64"
                       role="img"
@@ -1820,7 +1824,7 @@ export function ReviewWorkbench({
                         y={0}
                         width={Math.max(4, ((trimEnd - trimStart) / effectiveDur) * 640)}
                         height={64}
-                        fill="rgba(124, 92, 252, 0.18)"
+                        fill="var(--color-trim-tint)"
                       />
                       {timelinePolyline && (
                         <polyline
@@ -1835,7 +1839,7 @@ export function ReviewWorkbench({
                         y1={0}
                         x2={(currentTime / effectiveDur) * 640}
                         y2={64}
-                        stroke="#ffffff"
+                        stroke="var(--color-ink)"
                         strokeWidth={2}
                       />
                     </svg>
@@ -1874,25 +1878,23 @@ export function ReviewWorkbench({
                 </div>
               </div>
 
-              {/* Right Inspector Column: Live 9:16 Vertical Stage + CC Editor + Export */}
-              <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between">
-                  <span className="eyebrow-label !text-ink-2">9:16 Vertical Master</span>
-                  <span className="studio-pill num">1080×1920 MP4</span>
+                  <span className="text-sm font-medium text-ink">9:16 vertical master</span>
+                  <span className="status-tag num">1080 × 1920</span>
                 </div>
 
-                <div className="studio-card p-3.5 flex flex-col items-center gap-3.5">
+                <div className="well p-4 flex flex-col items-center gap-4">
                   <canvas
                     ref={canvasRef}
                     width={270}
                     height={480}
                     aria-label="Synced 9:16 vertical stage preview"
-                    className="w-full max-w-[270px] aspect-[9/16] rounded-xl border border-rule bg-inset shadow-lg"
+                    className="w-full max-w-[270px] aspect-[9/16] bg-inset"
                   />
 
-                  {/* Stage Layout Split Switcher */}
                   <div className="w-full">
-                    <span className="block eyebrow-label mb-1.5">Stage Layout</span>
+                    <span className="block panel-label mb-1.5">Stage layout</span>
                     <div className="seg-group grid-cols-4 w-full" role="group" aria-label="Vertical split preset">
                       <button
                         type="button"
@@ -1929,11 +1931,10 @@ export function ReviewWorkbench({
                     </div>
                   </div>
 
-                  {/* Audio Normalization Toggle */}
                   <label className="w-full flex items-center justify-between gap-2 py-2 border-t border-b border-rule cursor-pointer">
                     <span className="flex items-center gap-2 text-xs font-medium text-ink-2">
                       <Volume2 size={14} className="text-accent" aria-hidden="true" />
-                      <span>Master Audio (-14 LUFS)</span>
+                      <span>Master audio (-14 LUFS)</span>
                     </span>
                     <input
                       type="checkbox"
@@ -1943,16 +1944,15 @@ export function ReviewWorkbench({
                         setNormalizeAudio(val)
                         void commitCropPatch({ normalize_audio: val, sync_folder: false })
                       }}
-                      className="w-4 h-4 accent-accent rounded"
+                      className="w-4 h-4 accent-accent"
                     />
                   </label>
 
-                  {/* Center Hook Banner (TikTok Viral Context / Exaggerated Headline Pill) */}
-                  <div className="w-full flex flex-col gap-2.5 pb-2.5 border-b border-rule">
+                  <div className="w-full flex flex-col gap-2.5 pb-3 border-b border-rule">
                     <label className="w-full flex items-center justify-between gap-2 cursor-pointer">
                       <span className="flex items-center gap-2 text-xs font-medium text-ink-2">
                         <Sparkles size={14} className="text-accent" aria-hidden="true" />
-                        <span>Center Hook Banner (TikTok Pill)</span>
+                        <span>Center hook banner</span>
                       </span>
                       <input
                         type="checkbox"
@@ -1972,11 +1972,11 @@ export function ReviewWorkbench({
                             sync_folder: false,
                           })
                         }}
-                        className="w-4 h-4 accent-accent rounded"
+                        className="w-4 h-4 accent-accent"
                       />
                     </label>
 
-                    <div className="grid grid-cols-2 gap-1.5">
+                    <div className="grid grid-cols-2 gap-2">
                       <button
                         type="button"
                         onClick={() => {
@@ -1991,10 +1991,10 @@ export function ReviewWorkbench({
                           })
                         }}
                         title="Generate a context headline explaining what is happening in this clip"
-                        className="btn btn--compact btn--quiet !text-[11px]"
+                        className="btn btn--compact btn--quiet"
                       >
                         <Sparkles size={12} className="text-accent" aria-hidden="true" />
-                        <span>Auto Context</span>
+                        <span>Auto context</span>
                       </button>
 
                       <button
@@ -2016,10 +2016,11 @@ export function ReviewWorkbench({
                             sync_folder: false,
                           })
                         }}
-                        title="Cycle punchy viral reaction hooks with emojis"
-                        className="btn btn--compact btn--accent-outline !text-[11px]"
+                        title="Cycle punchy viral reaction hooks"
+                        className="btn btn--compact btn--quiet"
                       >
-                        <span>Exaggerate 🔥</span>
+                        <Flame size={12} className="text-accent" aria-hidden="true" />
+                        <span>Viral hook</span>
                       </button>
                     </div>
 
@@ -2030,7 +2031,7 @@ export function ReviewWorkbench({
                           aria-label="Center hook banner text"
                           maxLength={120}
                           value={hookText}
-                          placeholder="Type context or viral hook (e.g. Wait for the ending 😭🔥)"
+                          placeholder="Write context or a viral reaction hook"
                           onChange={(e) => {
                             if (previewExported) setPreviewExported(false)
                             setHookText(e.target.value)
@@ -2086,7 +2087,7 @@ export function ReviewWorkbench({
                             }}
                             className="seg-cell"
                           >
-                            Full Clip
+                            Full clip
                           </button>
                           <button
                             type="button"
@@ -2098,19 +2099,18 @@ export function ReviewWorkbench({
                             }}
                             className="seg-cell"
                           >
-                            First 5s Intro
+                            First 5s intro
                           </button>
                         </div>
                       </>
                     )}
                   </div>
 
-                  {/* Closed Captions (CC) Full Editor */}
-                  <div className="w-full flex flex-col gap-2.5 pb-2.5 border-b border-rule">
+                  <div className="w-full flex flex-col gap-2.5 pb-3 border-b border-rule">
                     <label className="w-full flex items-center justify-between gap-2 cursor-pointer">
                       <span className="flex items-center gap-2 text-xs font-medium text-ink-2">
                         <Captions size={14} className="text-accent" aria-hidden="true" />
-                        <span>Burn Closed Captions (CC)</span>
+                        <span>Burn closed captions (CC)</span>
                       </span>
                       <input
                         type="checkbox"
@@ -2120,7 +2120,7 @@ export function ReviewWorkbench({
                           setCaptionsEnabled(val)
                           void commitCropPatch({ captions_enabled: val, sync_folder: false })
                         }}
-                        className="w-4 h-4 accent-accent rounded"
+                        className="w-4 h-4 accent-accent"
                       />
                     </label>
 
@@ -2136,7 +2136,7 @@ export function ReviewWorkbench({
                             }}
                             className="seg-cell"
                           >
-                            Bold Pop
+                            Bold pop
                           </button>
                           <button
                             type="button"
@@ -2147,7 +2147,7 @@ export function ReviewWorkbench({
                             }}
                             className="seg-cell"
                           >
-                            Clean Box
+                            Clean box
                           </button>
                           <button
                             type="button"
@@ -2173,7 +2173,7 @@ export function ReviewWorkbench({
                               }}
                               className="seg-cell"
                             >
-                              Split Seam
+                              Split seam
                             </button>
                             <button
                               type="button"
@@ -2184,20 +2184,20 @@ export function ReviewWorkbench({
                               }}
                               className="seg-cell"
                             >
-                              Lower Safe
+                              Lower safe
                             </button>
                           </div>
                         )}
 
                         <label className="w-full flex items-center justify-between gap-2 py-0.5 cursor-pointer">
                           <span className="text-xs text-ink-2">
-                            Streamer Voice Only (filter game NPCs &amp; subtitles)
+                            Streamer voice only (filter game NPCs)
                           </span>
                           <input
                             type="checkbox"
                             checked={streamerVoiceOnly}
                             onChange={(e) => setStreamerVoiceOnly(e.target.checked)}
-                            className="w-4 h-4 accent-accent rounded"
+                            className="w-4 h-4 accent-accent"
                           />
                         </label>
 
@@ -2207,7 +2207,7 @@ export function ReviewWorkbench({
                             disabled={captionsBusy}
                             aria-busy={captionsBusy}
                             onClick={handleGenerateCaptions}
-                            className="btn btn--compact btn--accent-outline flex-1"
+                            className="btn btn--compact btn--quiet flex-1"
                           >
                             {captionsBusy ? (
                               <span className="desk-spinner" aria-hidden="true" />
@@ -2216,7 +2216,7 @@ export function ReviewWorkbench({
                             )}
                             <span>
                               {captionsBusy
-                                ? 'Transcribing...'
+                                ? 'Transcribing…'
                                 : captionsDraft.length > 0
                                   ? `Re-generate CC (${captionsDraft.length})`
                                   : 'Generate CC'}
@@ -2257,14 +2257,14 @@ export function ReviewWorkbench({
                                 No caption lines yet. Click + Line or Generate CC.
                               </p>
                             ) : (
-                              <div className="max-h-48 overflow-y-auto flex flex-col gap-1.5 pr-1">
+                              <div className="max-h-48 overflow-y-auto flex flex-col gap-2 pr-1">
                                 {captionsDraft.map((seg, idx) => (
                                   <div
                                     key={`${idx}-${seg.start}`}
-                                    className="p-2 rounded-lg bg-inset border border-rule flex flex-col gap-1.5"
+                                    className="p-2 bg-paper border border-rule flex flex-col gap-1.5"
                                   >
                                     <div className="flex items-center justify-between gap-1.5">
-                                      <div className="flex items-center gap-1 text-[11px] text-muted">
+                                      <div className="flex items-center gap-1 text-xs text-muted">
                                         <span>In</span>
                                         <input
                                           type="number"
@@ -2281,7 +2281,7 @@ export function ReviewWorkbench({
                                             )
                                             setCaptionsDirty(true)
                                           }}
-                                          className="field-input num !min-h-[26px] !px-1.5 !text-[11px] w-14"
+                                          className="field-input num !min-h-[32px] !px-1.5 !text-xs w-14"
                                         />
                                         <span>Out</span>
                                         <input
@@ -2299,7 +2299,7 @@ export function ReviewWorkbench({
                                             )
                                             setCaptionsDirty(true)
                                           }}
-                                          className="field-input num !min-h-[26px] !px-1.5 !text-[11px] w-14"
+                                          className="field-input num !min-h-[32px] !px-1.5 !text-xs w-14"
                                         />
                                       </div>
 
@@ -2307,7 +2307,7 @@ export function ReviewWorkbench({
                                         type="button"
                                         onClick={() => handleDeleteCaptionLine(idx)}
                                         aria-label={`Delete caption line ${idx + 1}`}
-                                        className="btn btn--compact btn--ghost !min-h-[24px] !w-6 !p-0"
+                                        className="btn btn--compact btn--ghost btn--icon"
                                       >
                                         <X size={12} aria-hidden="true" />
                                       </button>
@@ -2326,7 +2326,7 @@ export function ReviewWorkbench({
                                         )
                                         setCaptionsDirty(true)
                                       }}
-                                      className="field-input !min-h-[30px] text-xs"
+                                      className="field-input !min-h-[32px] text-xs"
                                     />
                                   </div>
                                 ))}
@@ -2339,10 +2339,10 @@ export function ReviewWorkbench({
                                 disabled={captionsSaveBusy}
                                 aria-busy={captionsSaveBusy}
                                 onClick={handleSaveCaptions}
-                                className="btn btn--compact btn--primary w-full"
+                                className="btn btn--compact btn--quiet w-full"
                               >
                                 {captionsSaveBusy && <span className="desk-spinner" aria-hidden="true" />}
-                                <span>{captionsSaveBusy ? 'Saving CC...' : 'Save CC Timeline'}</span>
+                                <span>{captionsSaveBusy ? 'Saving CC…' : 'Save CC timeline'}</span>
                               </button>
                             )}
                           </div>
@@ -2351,7 +2351,6 @@ export function ReviewWorkbench({
                     )}
                   </div>
 
-                  {/* Primary Render Action + Export Downloads */}
                   <button
                     type="button"
                     disabled={renderBusy || selectedClip.status === 'rendering'}
@@ -2364,9 +2363,9 @@ export function ReviewWorkbench({
                     )}
                     <span>
                       {selectedClip.status === 'rendering' || renderBusy
-                        ? 'Rendering 9:16 MP4...'
+                        ? 'Rendering 9:16 MP4…'
                         : selectedClip.status === 'exported'
-                          ? 'Re-Render 9:16 MP4'
+                          ? 'Re-render 9:16 MP4'
                           : 'Render 9:16 MP4'}
                     </span>
                   </button>
@@ -2376,7 +2375,7 @@ export function ReviewWorkbench({
                       <a
                         href={exportVideoUrl(selectedClip.id)}
                         download={`${selectedClip.channel_login}_${selectedClip.id.slice(0, 8)}.mp4`}
-                        className="btn btn--accent-outline w-full"
+                        className="btn btn--quiet w-full"
                       >
                         <Download size={15} aria-hidden="true" />
                         <span>
@@ -2387,21 +2386,20 @@ export function ReviewWorkbench({
                         <a
                           href={exportSrtUrl(selectedClip.id)}
                           download={`${selectedClip.channel_login}_${selectedClip.id.slice(0, 8)}.srt`}
-                          className="btn btn--compact btn--quiet w-full"
+                          className="btn btn--compact btn--quiet w-full whitespace-nowrap"
                         >
                           <Captions size={14} aria-hidden="true" />
-                          <span>Download Subtitles (.srt)</span>
+                          <span>Subtitles (.srt)</span>
                         </a>
                       )}
                     </div>
                   )}
 
-                  {/* 9:16 Cover Thumbnail Capture & Download */}
                   <div className="w-full flex flex-col gap-2 pt-2 border-t border-rule">
                     <div className="flex items-center justify-between gap-2">
                       <span className="flex items-center gap-2 text-xs font-medium text-ink-2">
                         <Image size={14} className="text-accent" aria-hidden="true" />
-                        <span>9:16 Cover Frame</span>
+                        <span>9:16 cover frame</span>
                       </span>
                       {selectedClip.thumb_time_sec != null && (
                         <span className="num text-xs text-muted">
@@ -2420,7 +2418,7 @@ export function ReviewWorkbench({
                           setThumbTitleOverlay(val)
                           void commitCropPatch({ thumb_title_overlay: val, sync_folder: false })
                         }}
-                        className="w-4 h-4 accent-accent rounded"
+                        className="w-4 h-4 accent-accent"
                       />
                     </label>
 
@@ -2436,7 +2434,7 @@ export function ReviewWorkbench({
                       ) : (
                         <Image size={14} aria-hidden="true" />
                       )}
-                      <span>{thumbBusy ? 'Capturing cover...' : 'Capture Cover Frame'}</span>
+                      <span>{thumbBusy ? 'Capturing cover…' : 'Capture cover frame'}</span>
                     </button>
 
                     {selectedClip.export_thumb_path && (
@@ -2444,12 +2442,12 @@ export function ReviewWorkbench({
                         <img
                           src={exportThumbUrl(selectedClip.id, thumbCacheBust)}
                           alt={`9:16 cover thumbnail for ${selectedClip.title}`}
-                          className="w-14 aspect-[9/16] rounded-md object-cover border border-rule bg-inset shrink-0"
+                          className="w-14 aspect-[9/16] object-cover border border-rule bg-inset shrink-0"
                         />
                         <a
                           href={exportThumbUrl(selectedClip.id, thumbCacheBust)}
                           download={`${selectedClip.channel_login}_${selectedClip.id.slice(0, 8)}_9x16.jpg`}
-                          className="btn btn--compact btn--accent-outline flex-1 whitespace-nowrap"
+                          className="btn btn--compact btn--quiet flex-1 whitespace-nowrap"
                         >
                           <Download size={13} aria-hidden="true" />
                           <span>Cover (.jpg)</span>
@@ -2486,7 +2484,7 @@ export function ReviewWorkbench({
                           onClick={handleDiscard}
                           className="btn btn--compact btn--danger flex-1"
                         >
-                          Confirm Delete
+                          Confirm delete
                         </button>
                         <button
                           type="button"
@@ -2503,19 +2501,19 @@ export function ReviewWorkbench({
                         className="btn btn--compact btn--ghost w-full"
                       >
                         <Trash2 size={13} aria-hidden="true" />
-                        <span>Delete Clip</span>
+                        <span>Delete clip</span>
                       </button>
                     )}
                   </div>
                 </div>
 
                 {chatSamples.length > 0 && (
-                  <div className="studio-card p-3">
-                    <p className="eyebrow-label mb-2">Trigger Chat Context</p>
+                  <div className="well p-3">
+                    <p className="panel-label mb-2">Trigger chat context</p>
                     <ul className="list-none m-0 p-0 flex flex-col gap-1 max-h-28 overflow-y-auto">
                       {chatSamples.slice(0, 6).map((s, idx) => (
                         <li key={`${s.author}-${idx}`} className="text-xs leading-snug">
-                          <span className="text-accent font-semibold mr-1.5">{s.author}</span>
+                          <span className="text-accent font-medium mr-1.5">{s.author}</span>
                           <span className="text-ink-2">{s.text}</span>
                         </li>
                       ))}
@@ -2527,15 +2525,15 @@ export function ReviewWorkbench({
           </div>
         ) : (
           <div className="flex-1 p-8 flex items-center justify-center">
-            <div className="studio-card max-w-lg w-full p-8 flex flex-col gap-4">
-              <h3 className="section-title">Studio Ready for Clips</h3>
+            <div className="well max-w-lg w-full p-8 flex flex-col gap-4">
+              <h3 className="section-title">Console ready for clips</h3>
               <p className="text-sm text-ink-2">
-                Start live monitoring on a channel in the left sidebar, capture an instant buffer with Clip Now, or analyze any YouTube URL / Twitch VOD / local video file to extract viral moments automatically.
+                Start live monitoring on a channel in the left rail, capture an instant buffer with Clip now, or analyze a YouTube URL, Twitch VOD, or local video file to extract viral cuts automatically.
               </p>
               <div className="flex items-center gap-3 flex-wrap">
                 <button type="button" onClick={onOpenVodModal} className="btn btn--primary">
                   <Video size={16} aria-hidden="true" />
-                  <span>New Video / VOD</span>
+                  <span>New video</span>
                 </button>
               </div>
             </div>

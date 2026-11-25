@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import {
   Bookmark,
+  ChevronDown,
+  ChevronUp,
   Clapperboard,
   Folder,
   FolderOpen,
@@ -77,6 +79,7 @@ export function ChannelRail({
   onCreateMarker,
 }: ChannelRailProps) {
   const [showAddForm, setShowAddForm] = useState(false)
+  const [mobileRailOpen, setMobileRailOpen] = useState(false)
   const [loginInput, setLoginInput] = useState('')
   const [thresholdInput, setThresholdInput] = useState('68')
   const [startImmediately, setStartImmediately] = useState(true)
@@ -197,7 +200,7 @@ export function ChannelRail({
     ) {
       setActionErrors((prev) => ({
         ...prev,
-        [ch.id]: 'Threshold 10–100, pre-roll 5–180s, post-roll 5–120s.',
+        [ch.id]: 'Threshold 10 to 100, pre-roll 5 to 180s, post-roll 5 to 120s.',
       }))
       return
     }
@@ -240,80 +243,104 @@ export function ChannelRail({
 
   return (
     <aside className="desk-rail" aria-label="Video folders and live channels">
-      {/* Video Folders Bin (Primary Quick-Switcher) */}
-      <div className="border-b border-rule p-3.5 flex flex-col gap-2.5">
-        <div className="flex items-center justify-between">
+      <div className="lg:hidden flex items-center justify-between px-4 py-2.5 border-b border-rule">
+        <span className="text-xs font-medium text-ink">
+          Folders ({clipFolders.length}) &amp; channels ({channels.length})
+        </span>
+        <button
+          type="button"
+          aria-expanded={mobileRailOpen}
+          onClick={() => setMobileRailOpen((v) => !v)}
+          className="btn btn--compact btn--quiet"
+        >
+          {mobileRailOpen ? (
+            <ChevronUp size={13} aria-hidden="true" />
+          ) : (
+            <ChevronDown size={13} aria-hidden="true" />
+          )}
+          <span>{mobileRailOpen ? 'Hide' : 'Browse'}</span>
+        </button>
+      </div>
+
+      <div className={`${mobileRailOpen ? 'flex' : 'hidden lg:flex'} flex-col flex-1 min-h-0`}>
+      <div className="border-b border-rule flex flex-col">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-rule">
           <div className="flex items-center gap-2">
-            <Folder size={15} className="text-accent" aria-hidden="true" />
-            <h2 className="eyebrow-label !text-ink">Video Projects</h2>
+            <Folder size={14} className="text-accent" aria-hidden="true" />
+            <h2 className="section-title">Project folders</h2>
           </div>
-          <span className="studio-pill num">{clipFolders.length}</span>
+          <span className="status-tag num">{clipFolders.length}</span>
         </div>
 
         {clipFolders.length === 0 ? (
-          <p className="text-xs text-muted py-1">
-            Analyzed URLs, uploads, and live captures are organized into project folders here.
+          <p className="text-xs text-muted px-4 py-3">
+            Analyzed URLs, uploads, and live captures group into folders here.
           </p>
         ) : (
-          <ul className="list-none m-0 p-0 flex flex-col gap-1.5 max-h-56 overflow-y-auto pr-0.5">
-            {clipFolders.map((folder) => {
-              const isActive = activeFolderKey === folder.key
-              return (
-                <li key={folder.key}>
-                  <button
-                    type="button"
-                    data-selected={isActive ? 'true' : 'false'}
-                    onClick={() => onSelectFolder(folder.key)}
-                    className="interactive-row p-2.5 flex flex-col gap-1"
-                  >
-                    <div className="flex items-center justify-between gap-2 w-full">
-                      <span className="flex items-center gap-2 min-w-0">
-                        {isActive ? (
-                          <FolderOpen size={14} className="text-accent shrink-0" aria-hidden="true" />
-                        ) : (
-                          <Folder size={14} className="text-muted shrink-0" aria-hidden="true" />
-                        )}
-                        <span className="text-xs font-semibold text-ink truncate">
-                          {folder.label}
+          <>
+            <ul className="list-none m-0 p-0 flex flex-col">
+              {clipFolders.map((folder) => {
+                const isActive = activeFolderKey === folder.key
+                return (
+                  <li key={folder.key}>
+                    <button
+                      type="button"
+                      data-selected={isActive ? 'true' : 'false'}
+                      onClick={() => onSelectFolder(folder.key)}
+                      className="interactive-row px-4 py-1.5 flex flex-col gap-0.5"
+                    >
+                      <div className="flex items-center justify-between gap-2 w-full min-w-0">
+                        <span className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+                          {isActive ? (
+                            <FolderOpen size={13} className="text-accent shrink-0" aria-hidden="true" />
+                          ) : (
+                            <Folder size={13} className="text-muted shrink-0" aria-hidden="true" />
+                          )}
+                          <span className="block text-xs font-medium text-ink leading-tight truncate min-w-0 flex-1">
+                            {folder.label.length > 28
+                              ? `${folder.label.slice(0, 27).trimEnd()}…`
+                              : folder.label}
+                          </span>
                         </span>
-                      </span>
-                      <span className="studio-pill studio-pill--accent !py-0 !px-2 num">
-                        {folder.clipCount}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between text-[11px] text-muted w-full pl-5">
-                      <span className="truncate">{folder.sublabel}</span>
-                      <span className="num shrink-0">
-                        {folder.exportedCount > 0
-                          ? `${folder.exportedCount}/${folder.clipCount} done`
-                          : `${folder.pendingCount} ready`}
-                      </span>
-                    </div>
-                  </button>
-                </li>
-              )
-            })}
+                        <span className="num text-xs text-accent leading-tight shrink-0 pl-2">
+                          {folder.clipCount}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 text-xs text-muted leading-tight w-full pl-5 min-w-0">
+                        <span className="block truncate min-w-0 flex-1">
+                          {folder.sublabel.length > 28
+                            ? `${folder.sublabel.slice(0, 27).trimEnd()}…`
+                            : folder.sublabel}
+                        </span>
+                        <span className="num shrink-0 pl-2">
+                          {folder.exportedCount > 0
+                            ? `${folder.exportedCount}/${folder.clipCount} exported`
+                            : `${folder.pendingCount} queued`}
+                        </span>
+                      </div>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
             {clipFolders.length > 1 && (
-              <li>
+              <div className="p-2">
                 <button
                   type="button"
                   aria-pressed={activeFolderKey === '__all__'}
                   onClick={() => onSelectFolder('__all__')}
-                  className={`btn btn--compact w-full ${
-                    activeFolderKey === '__all__' ? 'btn--accent-outline' : 'btn--ghost'
-                  }`}
+                  className="btn btn--compact btn--quiet w-full whitespace-nowrap"
                 >
-                  View All Folders Combined
+                  All folders
                 </button>
-              </li>
+              </div>
             )}
-          </ul>
+          </>
         )}
       </div>
 
-      {/* Live Stream Channels Section */}
-      <div className="flex items-center justify-between px-3.5 py-3 border-b border-rule">
-        <span className="eyebrow-label !text-ink">Live Streamers</span>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-rule">
+        <h2 className="section-title">Live channels</h2>
         <button
           type="button"
           onClick={() => {
@@ -325,15 +352,15 @@ export function ChannelRail({
           className="btn btn--quiet btn--compact"
         >
           <Plus size={13} aria-hidden="true" />
-          <span>{showAddForm ? 'Close' : 'Add Streamer'}</span>
+          <span>{showAddForm ? 'Close' : 'Add channel'}</span>
         </button>
       </div>
 
       {showAddForm && (
-        <form onSubmit={handleCreateSubmit} noValidate className="p-3.5 border-b border-rule bg-paper-2/60">
-          <div className="flex flex-col gap-2.5">
+        <form onSubmit={handleCreateSubmit} noValidate className="p-4 border-b border-rule well">
+          <div className="flex flex-col gap-3">
             <div>
-              <label htmlFor="channel-login-input" className="block text-xs font-medium text-ink-2 mb-1">
+              <label htmlFor="channel-login-input" className="block panel-label mb-1">
                 Twitch handle or URL
               </label>
               <input
@@ -359,8 +386,8 @@ export function ChannelRail({
             </div>
 
             <div>
-              <label htmlFor="channel-threshold-input" className="block text-xs font-medium text-ink-2 mb-1">
-                Auto-clip hype trigger (10–100)
+              <label htmlFor="channel-threshold-input" className="block panel-label mb-1">
+                Auto-clip hype trigger (10 to 100)
               </label>
               <input
                 id="channel-threshold-input"
@@ -376,13 +403,13 @@ export function ChannelRail({
               />
             </div>
 
-            <label className="flex items-center gap-2 py-0.5 text-xs text-ink-2 cursor-pointer">
+            <label className="flex items-center gap-2 text-xs text-ink-2 cursor-pointer">
               <input
                 type="checkbox"
                 checked={startImmediately}
                 onChange={(e) => setStartImmediately(e.target.checked)}
                 disabled={addBusy}
-                className="w-4 h-4 accent-accent rounded"
+                className="w-4 h-4 accent-accent"
               />
               <span>Start live monitoring right away</span>
             </label>
@@ -409,50 +436,50 @@ export function ChannelRail({
               type="submit"
               disabled={addBusy}
               aria-busy={addBusy}
-              className="btn btn--primary btn--compact !min-h-[36px] w-full"
+              className="btn btn--primary btn--compact w-full"
             >
               {addBusy ? <span className="desk-spinner" aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}
-              <span>{addBusy ? 'Adding...' : 'Save Streamer'}</span>
+              <span>{addBusy ? 'Adding…' : 'Save channel'}</span>
             </button>
           </div>
         </form>
       )}
 
-      <div className="flex-1 overflow-y-auto p-3">
+      <div className="flex-1 overflow-y-auto">
         {loading && channels.length === 0 ? (
-          <div className="flex flex-col gap-2.5" aria-busy="true" aria-label="Loading channels">
+          <div className="p-4 flex flex-col gap-3" aria-busy="true" aria-label="Loading channels">
             {[1, 2].map((slot) => (
-              <div key={slot} className="studio-card p-3">
-                <div className="h-3.5 rounded bg-paper-3 w-2/3 mb-2" />
-                <div className="h-2 rounded bg-paper-3 w-full mb-3" />
-                <div className="h-7 rounded bg-paper-3 w-full" />
+              <div key={slot} className="well p-3">
+                <div className="h-3 bg-paper-3 w-2/3 mb-2" />
+                <div className="h-2 bg-paper-3 w-full mb-3" />
+                <div className="h-7 bg-paper-3 w-full" />
               </div>
             ))}
           </div>
         ) : error && channels.length === 0 ? (
-          <div className="studio-card p-3 flex flex-col gap-2.5">
+          <div className="p-4 flex flex-col gap-3">
             <p className="text-xs text-error">{error}</p>
             <button type="button" onClick={onRetry} className="btn btn--quiet btn--compact">
               Retry loading channels
             </button>
           </div>
         ) : channels.length === 0 ? (
-          <div className="studio-card p-3.5 flex flex-col gap-2.5">
-            <p className="text-xs font-semibold text-ink">No live channels added yet</p>
+          <div className="p-4 flex flex-col gap-3">
+            <p className="text-xs font-medium text-ink">No live channels added yet</p>
             <p className="text-xs text-muted">
-              Add a Twitch streamer to auto-capture hype clips while they stream live.
+              Add a Twitch channel to capture rolling hype clips while live.
             </p>
             <button
               type="button"
               onClick={() => setShowAddForm(true)}
-              className="btn btn--accent-outline btn--compact w-full"
+              className="btn btn--quiet btn--compact w-full"
             >
-              <Plus size={14} aria-hidden="true" />
-              <span>Add Streamer</span>
+              <Plus size={13} aria-hidden="true" />
+              <span>Add channel</span>
             </button>
           </div>
         ) : (
-          <ul className="list-none m-0 p-0 flex flex-col gap-2.5">
+          <ul className="list-none m-0 p-0 flex flex-col">
             {channels.map((ch) => {
               const tick = latestTicks[ch.id]
               const meta = metadataByChannel[ch.id]
@@ -472,8 +499,8 @@ export function ChannelRail({
               return (
                 <li
                   key={ch.id}
-                  className={`studio-card p-3 flex flex-col gap-2.5 transition-colors ${
-                    isSelected ? '!border-accent/60 bg-paper-3/60' : ''
+                  className={`p-4 border-b border-rule flex flex-col gap-3 ${
+                    isSelected ? 'well border-l-2 border-l-accent' : ''
                   }`}
                 >
                   <div>
@@ -481,29 +508,27 @@ export function ChannelRail({
                       type="button"
                       aria-pressed={isSelected}
                       onClick={() => onSelectChannel(ch.id)}
-                      className="w-full text-left flex items-center justify-between gap-2 bg-transparent border-0 p-0 cursor-pointer"
+                      className="w-full min-h-[32px] text-left flex items-center justify-between gap-2 bg-transparent border-0 p-0 cursor-pointer"
                     >
-                      <span className="font-semibold text-sm text-ink truncate">
+                      <span className="font-medium text-sm text-ink truncate">
                         @{ch.display_name || ch.channel_login}
                       </span>
                       <span
-                        className={`studio-pill !py-0.5 !px-2 ${
-                          ch.is_monitoring ? 'studio-pill--success' : ''
-                        }`}
+                        className={`status-tag ${ch.is_monitoring ? 'status-tag--live' : ''}`}
                       >
                         {ch.is_monitoring ? 'Live' : 'Idle'}
                       </span>
                     </button>
 
-                    <div className="flex items-center justify-between text-xs text-muted mt-1.5 mb-1">
-                      <span>Hype meter</span>
+                    <div className="flex items-center justify-between text-xs text-muted mt-2 mb-1.5">
+                      <span>Hype level</span>
                       <span className="num text-ink-2">
                         {currentHype.toFixed(1)} / {ch.hype_threshold.toFixed(0)}
                       </span>
                     </div>
 
                     {meta?.is_live && (
-                      <div className="flex items-center justify-between gap-2 text-xs mb-1.5">
+                      <div className="flex items-center justify-between gap-2 text-xs mb-2">
                         <span className="text-ink-2 truncate">
                           {meta.game_name || 'Streaming'}
                         </span>
@@ -521,14 +546,12 @@ export function ChannelRail({
                       aria-valuemin={0}
                       aria-valuemax={100}
                       aria-valuenow={Math.round(currentHype)}
-                      className="relative h-1.5 w-full rounded-full bg-inset border border-rule overflow-hidden"
+                      className="meter"
                     >
-                      <div
-                        className={
-                          currentHype >= ch.hype_threshold
-                            ? 'h-full rounded-full bg-accent'
-                            : 'h-full rounded-full bg-emerald-400/80'
-                        }
+                      <span
+                        className={`meter__fill ${
+                          currentHype >= ch.hype_threshold ? 'meter__fill--peak' : ''
+                        }`}
                         style={{
                           width: `${Math.max(0, Math.min(100, currentHype))}%`,
                         }}
@@ -536,8 +559,8 @@ export function ChannelRail({
                     </div>
                   </div>
 
-                  <div className="flex flex-col gap-1.5">
-                    <div className="flex items-center gap-1.5">
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2">
                       <button
                         type="button"
                         disabled={toggleBusy}
@@ -548,7 +571,7 @@ export function ChannelRail({
                           )
                         }
                         className={`btn btn--compact flex-1 ${
-                          ch.is_monitoring ? 'btn--danger' : 'btn--accent-outline'
+                          ch.is_monitoring ? 'btn--danger' : 'btn--quiet'
                         }`}
                       >
                         {toggleBusy ? (
@@ -572,7 +595,7 @@ export function ChannelRail({
                       </button>
                     </div>
 
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-2">
                       <button
                         type="button"
                         disabled={!ch.is_monitoring || clipBusy}
@@ -593,7 +616,7 @@ export function ChannelRail({
                         ) : (
                           <Scissors size={12} aria-hidden="true" />
                         )}
-                        <span>Clip Now</span>
+                        <span>Clip now</span>
                       </button>
 
                       <select
@@ -604,7 +627,7 @@ export function ChannelRail({
                           const val = Number(e.target.value)
                           setClipDurationByChannel((prev) => ({ ...prev, [ch.id]: val }))
                         }}
-                        className="field-select num !min-h-[32px] !px-2 !text-xs w-20 shrink-0"
+                        className="field-select num min-h-[32px] px-2 text-xs w-20 shrink-0"
                       >
                         <option value="60">60s</option>
                         <option value="90">90s</option>
@@ -621,10 +644,10 @@ export function ChannelRail({
                   )}
 
                   {isTuning && draft && (
-                    <div className="pt-2.5 border-t border-rule flex flex-col gap-2">
-                      <div className="grid grid-cols-3 gap-1.5">
+                    <div className="pt-3 border-t border-rule flex flex-col gap-2.5">
+                      <div className="grid grid-cols-3 gap-2">
                         <div>
-                          <label htmlFor={`th-${ch.id}`} className="block text-[11px] text-muted mb-1">
+                          <label htmlFor={`th-${ch.id}`} className="block panel-label mb-1">
                             Trigger
                           </label>
                           <input
@@ -643,7 +666,7 @@ export function ChannelRail({
                           />
                         </div>
                         <div>
-                          <label htmlFor={`pre-${ch.id}`} className="block text-[11px] text-muted mb-1">
+                          <label htmlFor={`pre-${ch.id}`} className="block panel-label mb-1">
                             Pre (s)
                           </label>
                           <input
@@ -662,7 +685,7 @@ export function ChannelRail({
                           />
                         </div>
                         <div>
-                          <label htmlFor={`post-${ch.id}`} className="block text-[11px] text-muted mb-1">
+                          <label htmlFor={`post-${ch.id}`} className="block panel-label mb-1">
                             Post (s)
                           </label>
                           <input
@@ -682,7 +705,7 @@ export function ChannelRail({
                         </div>
                       </div>
 
-                      <label className="flex items-center gap-2 py-0.5 text-xs text-ink-2 cursor-pointer">
+                      <label className="flex items-center gap-2 text-xs text-ink-2 cursor-pointer">
                         <input
                           type="checkbox"
                           checked={draft.auto_monitor_online}
@@ -692,20 +715,24 @@ export function ChannelRail({
                               [ch.id]: { ...draft, auto_monitor_online: e.target.checked },
                             }))
                           }
-                          className="w-4 h-4 accent-accent rounded"
+                          className="w-4 h-4 accent-accent"
                         />
                         <span>Auto-start when live</span>
                       </label>
 
-                      <div className="flex items-center justify-between gap-1.5 pt-1">
+                      {tuningSavedId === ch.id && (
+                        <p className="text-xs text-success">Settings updated.</p>
+                      )}
+
+                      <div className="flex items-center justify-between gap-2 pt-1">
                         <button
                           type="button"
                           disabled={tuneBusy}
                           aria-busy={tuneBusy}
                           onClick={() => handleSaveTuning(ch)}
-                          className="btn btn--compact btn--accent-outline flex-1"
+                          className="btn btn--compact btn--quiet flex-1"
                         >
-                          {tuneBusy ? 'Saving...' : 'Save'}
+                          {tuneBusy ? 'Saving…' : 'Save'}
                         </button>
 
                         {confirmDeleteId === ch.id ? (
@@ -742,8 +769,8 @@ export function ChannelRail({
                       </div>
 
                       {twitchStatus?.user_connected && (
-                        <div className="pt-2 border-t border-rule flex flex-col gap-1.5">
-                          <div className="flex items-center gap-1.5">
+                        <div className="pt-2 border-t border-rule flex flex-col gap-2">
+                          <div className="flex items-center gap-2">
                             <button
                               type="button"
                               disabled={publishBusy}
@@ -760,10 +787,10 @@ export function ChannelRail({
                                   }))
                                 })
                               }
-                              className="btn btn--compact btn--accent-outline whitespace-nowrap flex-1"
+                              className="btn btn--compact btn--quiet whitespace-nowrap flex-1"
                             >
                               <Clapperboard size={12} aria-hidden="true" />
-                              <span>{publishBusy ? 'Clipping' : 'Twitch Clip'}</span>
+                              <span>{publishBusy ? 'Clipping…' : 'Twitch clip'}</span>
                             </button>
 
                             {twitchStatus.has_broadcaster_scopes && (
@@ -783,7 +810,7 @@ export function ChannelRail({
                                 className="btn btn--compact btn--quiet whitespace-nowrap flex-1"
                               >
                                 <Bookmark size={12} aria-hidden="true" />
-                                <span>{markerBusy ? 'Marking' : 'Marker'}</span>
+                                <span>{markerBusy ? 'Marking…' : 'Marker'}</span>
                               </button>
                             )}
                           </div>
@@ -798,16 +825,12 @@ export function ChannelRail({
                                   rel="noreferrer"
                                   className="underline text-accent ml-2"
                                 >
-                                  Edit on Twitch
+                                  Open on Twitch
                                 </a>
                               )}
                             </p>
                           )}
                         </div>
-                      )}
-
-                      {tuningSavedId === ch.id && (
-                        <p className="field-help field-help--success">Channel settings saved.</p>
                       )}
                     </div>
                   )}
@@ -816,6 +839,7 @@ export function ChannelRail({
             })}
           </ul>
         )}
+      </div>
       </div>
     </aside>
   )

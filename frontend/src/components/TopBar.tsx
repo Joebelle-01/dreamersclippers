@@ -1,4 +1,4 @@
-import { Activity, Clapperboard, Cpu, KeyRound, PlusCircle, Radio, RefreshCw, Sparkles, Wifi } from 'lucide-react'
+import { Activity, Clapperboard, Cpu, KeyRound, Plus, Radio, RefreshCw, Terminal, Wifi } from 'lucide-react'
 import type { SystemStatus, TwitchStatus } from '../types'
 
 export type StudioWorkspaceTab = 'studio' | 'radar'
@@ -38,74 +38,68 @@ export function TopBar({
 
   return (
     <header className="desk-topbar">
-      {/* Brand + Live Status + Workspace Mode Switcher */}
-      <div className="flex items-center gap-3.5 flex-wrap min-w-0">
-        <div className="flex items-center gap-2.5">
-          <div
-            aria-hidden="true"
-            className="w-8 h-8 rounded-lg flex items-center justify-center bg-accent text-white shadow-sm"
-          >
-            <Sparkles size={16} />
-          </div>
-          <div className="flex items-center gap-2">
-            <h1 className="desk-wordmark">StreamClippers</h1>
-            <span className="studio-pill studio-pill--accent">Studio</span>
-          </div>
+      <div className="flex items-center gap-4 flex-wrap min-w-0">
+        <div className="flex items-center gap-3 pr-4 border-r border-rule">
+          <Terminal size={16} className="text-accent shrink-0" aria-hidden="true" />
+          <h1 className="desk-wordmark">StreamClippers</h1>
         </div>
 
         <div
           role="tablist"
           aria-label="Studio workspace view"
-          className="seg-group grid-cols-2 ml-1"
+          className="seg-group grid-cols-2"
         >
           <button
             type="button"
             role="tab"
             aria-selected={activeWorkspace === 'studio'}
             onClick={() => onSelectWorkspace('studio')}
-            className="seg-cell flex items-center gap-1.5"
+            className="seg-cell flex items-center gap-2"
           >
             <Clapperboard size={13} aria-hidden="true" />
-            <span>Clip Editor</span>
-            <span className="num opacity-80">({pendingCount + exportedCount})</span>
+            <span>Cut console</span>
           </button>
           <button
             type="button"
             role="tab"
             aria-selected={activeWorkspace === 'radar'}
             onClick={() => onSelectWorkspace('radar')}
-            className="seg-cell flex items-center gap-1.5"
+            className="seg-cell flex items-center gap-2"
           >
             <Activity size={13} aria-hidden="true" />
-            <span>Live Radar</span>
-            {activeMonitors > 0 && (
-              <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" aria-hidden="true" />
-            )}
+            <span>Telemetry radar</span>
           </button>
         </div>
 
-        <div
-          role="status"
-          aria-live="polite"
-          className={`studio-pill ${
-            activeMonitors > 0 ? 'studio-pill--success' : ''
-          }`}
-        >
-          <Radio size={13} aria-hidden="true" />
-          <span className="num">
-            {activeMonitors > 0 ? `${activeMonitors} Monitoring` : 'Standby'}
+        <div className="hidden md:flex items-center gap-4 pl-3 border-l border-rule text-xs">
+          <span className="status-tag">
+            Queued <strong className="num text-ink-2">{pendingCount}</strong>
+          </span>
+          <span className="status-tag">
+            Exported <strong className="num text-ink-2">{exportedCount}</strong>
+          </span>
+          <span
+            role="status"
+            aria-live="polite"
+            className={`status-tag pl-3 border-l border-rule ${
+              activeMonitors > 0 ? 'status-tag--live' : ''
+            }`}
+          >
+            <Radio size={12} aria-hidden="true" />
+            <span className="num">
+              {activeMonitors > 0 ? `${activeMonitors} live` : 'Standby'}
+            </span>
           </span>
         </div>
       </div>
 
-      {/* System Telemetry + Primary Actions */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="hidden xl:flex items-center gap-2.5 text-xs">
+        <div className="hidden 2xl:flex items-center gap-3 text-xs">
           {statusLoading && !systemStatus ? (
-            <span className="studio-pill">Checking engine...</span>
+            <span className="status-tag">Checking engine…</span>
           ) : statusError ? (
             <div className="flex items-center gap-2">
-              <span className="studio-pill studio-pill--danger">Backend offline</span>
+              <span className="status-tag status-tag--alert">Engine offline</span>
               <button
                 type="button"
                 onClick={onRetryStatus}
@@ -119,35 +113,35 @@ export function TopBar({
           ) : (
             <>
               <span
-                className={`studio-pill ${
-                  !ffmpegReady ? 'studio-pill--danger' : nvencReady ? 'studio-pill--cyan' : ''
+                className={`status-tag ${
+                  !ffmpegReady ? 'status-tag--alert' : nvencReady ? 'status-tag--ready' : ''
                 }`}
                 title={systemStatus?.gpu_name ?? 'Video Encoder'}
               >
-                <Cpu size={13} aria-hidden="true" />
+                <Cpu size={12} aria-hidden="true" />
                 <span>
                   {!ffmpegReady
-                    ? 'FFmpeg Missing'
+                    ? 'FFmpeg missing'
                     : nvencReady
                       ? systemStatus?.gpu_name
-                        ? `NVENC · ${systemStatus.gpu_name.replace('NVIDIA GeForce ', '')}`
+                        ? `NVENC ${systemStatus.gpu_name.replace('NVIDIA GeForce ', '')}`
                         : 'RTX NVENC'
                       : 'x264 CPU'}
                 </span>
               </span>
 
               <span
-                className={`studio-pill ${
+                className={`status-tag pl-3 border-l border-rule ${
                   wsState === 'open'
-                    ? 'studio-pill--success'
+                    ? 'status-tag--ready'
                     : wsState === 'connecting'
-                      ? 'studio-pill--accent'
-                      : 'studio-pill--danger'
+                      ? 'status-tag--live'
+                      : 'status-tag--alert'
                 }`}
               >
-                <Wifi size={13} aria-hidden="true" />
+                <Wifi size={12} aria-hidden="true" />
                 <span>
-                  {wsState === 'open' ? 'Live Sync' : wsState === 'connecting' ? 'Syncing' : 'Offline'}
+                  {wsState === 'open' ? 'Socket synced' : wsState === 'connecting' ? 'Syncing…' : 'Offline'}
                 </span>
               </span>
             </>
@@ -158,21 +152,19 @@ export function TopBar({
           <button
             type="button"
             onClick={onOpenTwitchModal}
-            className={`btn btn--compact ${
-              twitchStatus?.user_connected ? 'btn--accent-outline' : 'btn--quiet'
-            }`}
+            className="btn btn--quiet btn--compact"
           >
-            <KeyRound size={14} aria-hidden="true" />
-            <span>{twitchStatus?.user_connected ? 'Twitch Linked' : 'Twitch API'}</span>
+            <KeyRound size={13} aria-hidden="true" />
+            <span>{twitchStatus?.user_connected ? 'Twitch linked' : 'Twitch API'}</span>
           </button>
 
           <button
             type="button"
             onClick={onOpenVodModal}
-            className="btn btn--primary btn--compact !min-h-[36px] !px-3.5"
+            className="btn btn--quiet btn--compact"
           >
-            <PlusCircle size={15} aria-hidden="true" />
-            <span>New Video / VOD</span>
+            <Plus size={14} aria-hidden="true" />
+            <span>New video</span>
           </button>
         </div>
       </div>

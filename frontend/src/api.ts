@@ -337,14 +337,14 @@ export function getClipFolderMeta(clip: ClipItem): { label: string; sublabel: st
       clip.channel_login && clip.channel_login !== 'twitch_vod'
         ? `@${clip.channel_login}`
         : 'YouTube Video'
-    return { label: `YouTube · ${ytId}`, sublabel: sub }
+    return { label: `YouTube ${ytId}`, sublabel: sub }
   }
 
   if (clip.source_type === 'vod') {
     const match = ref.match(/\/videos\/(\d+)/)
     const vodId = match ? match[1] : ref || 'VOD'
     return {
-      label: `VOD · #${vodId}`,
+      label: `VOD #${vodId}`,
       sublabel: clip.channel_login ? `@${clip.channel_login}` : 'Twitch VOD',
     }
   }
@@ -358,13 +358,13 @@ export function getClipFolderMeta(clip: ClipItem): { label: string; sublabel: st
 
   if (clip.source_type === 'twitch_clip') {
     return {
-      label: `@${clip.channel_login} · Clips`,
+      label: `@${clip.channel_login} clips`,
       sublabel: 'Imported Twitch Clips',
     }
   }
 
   return {
-    label: `@${clip.channel_login} · Live`,
+    label: `@${clip.channel_login} live`,
     sublabel: 'Live Stream Buffer',
   }
 }
