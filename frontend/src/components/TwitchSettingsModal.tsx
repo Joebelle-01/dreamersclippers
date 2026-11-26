@@ -330,7 +330,7 @@ export function TwitchSettingsModal({
               <div className="pt-2 border-t border-rule text-muted flex flex-col gap-1">
                 <span>OAuth Redirect URI for Twitch Developer Console:</span>
                 <code className="num text-ink-2 break-all">
-                  {twitchStatus?.redirect_uri || 'http://127.0.0.1:8430/api/twitch/oauth/callback'}
+                  {twitchStatus?.redirect_uri || 'http://localhost:8430/api/twitch/oauth/callback'}
                 </code>
               </div>
             </div>

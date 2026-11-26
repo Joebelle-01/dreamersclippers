@@ -241,8 +241,9 @@ class TwitchHelixClient:
 
     @property
     def redirect_uri(self) -> str:
-        """Return local OAuth callback URL."""
-        return f"http://{self.settings.host}:{self.settings.port}/api/twitch/oauth/callback"
+        """Return local OAuth callback URL (uses localhost because Twitch rejects HTTP 127.0.0.1)."""
+        host = "localhost" if self.settings.host == "127.0.0.1" else self.settings.host
+        return f"http://{host}:{self.settings.port}/api/twitch/oauth/callback"
 
     @property
     def has_broadcaster_scopes(self) -> bool:
